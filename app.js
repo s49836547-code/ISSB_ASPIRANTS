@@ -41,7 +41,7 @@
 
   // ---------- Settings-driven content (owner-editable, with safe fallbacks) ----------
   const setting = (k, fb) => (settings && settings[k] != null) ? settings[k] : fb;
-  const contactInfo = () => setting('contact', { whatsapp: '03319824359', easypaisa: '03472433655', channel_url: 'https://whatsapp.com/channel/0029VbBqGMj8qIzjSRWwHr1V' });
+  const contactInfo = () => setting('contact', { whatsapp: '03472433655', easypaisa: '03472433655', channel_url: 'https://whatsapp.com/channel/0029VbBqGMj8qIzjSRWwHr1V' });
   // wa.me needs the INTERNATIONAL number with no leading 0, no '+', no spaces.
   // Accepts local Pakistani formats (0331..., +92331..., 0092331...) and normalizes to 92331...
   function waNumber(raw) {
@@ -54,7 +54,7 @@
   }
   const waLink = (raw) => { const n = waNumber(raw); return n ? `https://wa.me/${n}` : '#'; };
   const contributors = () => setting('contributors', [
-    { name: 'Ahmad', role: 'Study material contributor & WhatsApp channel operator', bio: '' },
+    { name: 'Meer', role: 'Study material contributor & WhatsApp channel operator', bio: '' },
     { name: 'Najeebullah', role: 'Study material contributor & WhatsApp channel operator', bio: '' }
   ]);
   const paymentInstructions = () => (setting('payment_instructions', {}) || {}).text
