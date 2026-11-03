@@ -137,6 +137,9 @@ for each row execute procedure public.touch_updated_at();
 
 -- 8a) Student status now supports suspend/restore. A suspended student instantly
 --     loses protected access because every storage/resource policy requires status='approved'.
+-- NOTE (2026-11-03): the email_confirmed_at check below has been REMOVED on the live
+--     database. See supabase-approval-fix.sql, which is the current version of this
+--     function and also adds public.admin_student_emails(). Do not re-run this block.
 create or replace function public.admin_set_student_status(target_user_id uuid, new_status text)
 returns void language plpgsql security definer set search_path = '' as $$
 declare actor uuid := (select auth.uid());

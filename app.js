@@ -53,6 +53,28 @@
     return d;
   }
   const waLink = (raw) => { const n = waNumber(raw); return n ? `https://wa.me/${n}` : '#'; };
+  // One-click reminder to a student who has not finished the signup steps.
+  // Message is chosen from what is actually missing (email verification / approval).
+  function studentReminderLink(u, emailRow) {
+    const n = waNumber(u && u.phone);
+    if (!n) return '';
+    const name = (u && u.full_name) ? u.full_name.trim().split(/\s+/)[0] : 'student';
+    const site = location.origin + location.pathname;
+    const verified = emailRow ? emailRow.email_verified : true;
+    let msg;
+    if (!verified) {
+      msg = `Assalam-o-Alaikum ${name}! ISSB ASPIRANTS par aap ka account ban gaya hai, lekin aap ki email abhi verify nahi hui. Kindly apna email inbox (aur spam folder) check karein aur verification link par click karein. Phir owner aap ko approve kar dega.\n\nSite: ${site}`;
+    } else if (u.status === 'approved') {
+      msg = `Assalam-o-Alaikum ${name}! Aap ka ISSB ASPIRANTS account APPROVE kar diya gaya hai. Ab aap login kar ke notes dekh aur download kar sakte hain.\n\nSite: ${site}`;
+    } else if (u.status === 'suspended') {
+      msg = `Assalam-o-Alaikum ${name}! Aap ka ISSB ASPIRANTS account filhaal suspended hai. Barah-e-karam academy se rabta karein.\n\nSite: ${site}`;
+    } else if (u.status === 'rejected') {
+      msg = `Assalam-o-Alaikum ${name}! Aap ki ISSB ASPIRANTS application approve nahi hui. Mazeed maloomat ke liye academy se rabta karein.\n\nSite: ${site}`;
+    } else {
+      msg = `Assalam-o-Alaikum ${name}! Aap ki ISSB ASPIRANTS application owner approval ke liye pending hai. Jald hi aap ko access mil jaye ga.\n\nSite: ${site}`;
+    }
+    return `https://wa.me/${n}?text=${encodeURIComponent(msg)}`;
+  }
   const contributors = () => setting('contributors', [
     { name: 'Meer', role: 'Study material contributor & WhatsApp channel operator', bio: '' },
     { name: 'Najeebullah', role: 'Study material contributor & WhatsApp channel operator', bio: '' }
@@ -163,7 +185,7 @@
     const cards = pageItems.map(r => `<article class="card resource-card"><div class="resource-meta"><span class="tag">${esc(r.category || 'General')}</span>${r.subject ? `<span class="tag">${esc(r.subject)}</span>` : ''}<span class="tag ${r.access_type === 'free' ? 'free' : 'paid'}">${r.access_type === 'free' ? 'FREE' : 'PREMIUM'}</span>${r.is_preview ? '<span class="tag">PREVIEW</span>' : ''}</div><h3>${esc(r.title)}</h3><p>${esc(r.description || 'Study resource published by ISSB ASPIRANTS.')}</p>${r.has_access ? `<button class="btn btn-primary" data-download="${esc(r.id)}">Secure download ↗</button>` : `<button class="btn btn-outline" data-restricted="${esc(r.id)}">${lockLabel(r)}</button>`}</article>`).join('');
     const pager = totalPages > 1 ? `<div class="form-actions" style="justify-content:center;margin-top:20px">${Array.from({ length: totalPages }, (_, i) => `<button class="btn ${notesView.page === i + 1 ? 'btn-primary' : 'btn-outline'}" data-page="${i + 1}">${i + 1}</button>`).join('')}</div>` : '';
     const notice = !session ? 'Sign in and get your account approved to access files.' : !isApproved() ? (profile && profile.status === 'suspended' ? 'Your account is suspended. Contact the academy to restore access.' : 'Your account must be approved before resource downloads are enabled.') : 'Select an eligible resource to request a secure download.';
-    return wrap(`${pageHead(freeOnly ? 'Free library' : 'Study resources', 'Notes Library', freeOnly ? 'Free notes still require a verified email and an approved student account.' : 'Browse the published catalogue. Restricted PDFs are served only to approved students with the required access.')}
+    return wrap(`${pageHead(freeOnly ? 'Free library' : 'Study resources', 'Notes Library', freeOnly ? 'Free notes are open to every approved student account. No email verification is needed — the owner approves your account.' : 'Browse the published catalogue. Restricted PDFs are served only to approved students with the required access.')}
     <div class="notice info" style="margin-bottom:18px">${notice}</div>
     ${!resources.length ? empty('No published resources yet', 'The catalogue will populate when the owner publishes materials.', '▤') : `
       <div class="filter-bar"><input type="search" id="notes-q" placeholder="Search title, category, subject…" value="${esc(notesView.q)}">
@@ -177,9 +199,9 @@
 
   // ---------- Auth ----------
   function renderAuth() {
-    return wrap(`${pageHead('Student portal', 'Create your student account', 'Registration has exactly four fields. You must verify your email and then wait for owner approval before accessing notes.')}
+    return wrap(`${pageHead('Student portal', 'Create your student account', 'Registration has exactly four fields. After you register, the owner approves your account and your notes access opens immediately — no email verification required.')}
     <div class="form-card"><div class="tabs"><button class="tab active" data-auth-mode="login">Login</button><button class="tab" data-auth-mode="register">Create account</button></div><div id="auth-notice">${configured ? '' : '<div style="margin-bottom:16px">' + configNotice() + '</div>'}</div>
-    <form id="auth-form"><div id="register-fields" class="form-grid hidden"><div class="field full"><label for="full-name">Full name</label><input id="full-name" name="full_name" maxlength="120" autocomplete="name"></div><div class="field full"><label for="phone">Phone / WhatsApp</label><input id="phone" name="phone" type="tel" maxlength="30" autocomplete="tel" placeholder="03xx xxxxxxx"></div></div><div class="field" style="margin-top:12px"><label for="email">Email address</label><input id="email" name="email" type="email" required maxlength="254" autocomplete="email"></div><div class="field" style="margin-top:12px"><label for="password">Password</label><input id="password" name="password" type="password" required minlength="8" autocomplete="current-password"><span class="form-note">Use at least 8 characters. Never share your password.</span></div><div class="form-actions"><button class="btn btn-primary" type="submit" id="auth-submit">Login →</button><button class="btn btn-outline" type="button" id="forgot-password">Forgot password?</button></div><p class="form-note">Registration is not complete until you verify your email. Owner approval is a separate step.</p></form></div>`);
+    <form id="auth-form"><div id="register-fields" class="form-grid hidden"><div class="field full"><label for="full-name">Full name</label><input id="full-name" name="full_name" maxlength="120" autocomplete="name"></div><div class="field full"><label for="phone">Phone / WhatsApp</label><input id="phone" name="phone" type="tel" maxlength="30" autocomplete="tel" placeholder="03xx xxxxxxx"></div></div><div class="field" style="margin-top:12px"><label for="email">Email address</label><input id="email" name="email" type="email" required maxlength="254" autocomplete="email"></div><div class="field" style="margin-top:12px"><label for="password">Password</label><input id="password" name="password" type="password" required minlength="8" autocomplete="current-password"><span class="form-note">Use at least 8 characters. Never share your password.</span></div><div class="form-actions"><button class="btn btn-primary" type="submit" id="auth-submit">Login →</button><button class="btn btn-outline" type="button" id="forgot-password">Forgot password?</button></div><p class="form-note">After registering you can sign in right away. Notes access opens as soon as the owner approves your account.</p></form></div>`);
   }
 
   // ---------- Student dashboard ----------
@@ -198,10 +220,10 @@
       ? `<div class="notice error" style="margin-bottom:20px"><strong>Account status: Rejected.</strong> Your account was not approved. Please contact the academy on WhatsApp (${esc(c.whatsapp)}) for clarification.</div>`
       : status === 'suspended'
         ? `<div class="notice error" style="margin-bottom:20px"><strong>Account status: Suspended.</strong> Protected resources are paused. Contact the academy on WhatsApp (${esc(c.whatsapp)}) to discuss restoration.</div>`
-        : `<div class="notice info" style="margin-bottom:20px"><strong>Account status: Pending.</strong> Verify your email if you have not already, then wait for owner approval. Free and premium resources remain locked until approval.</div>`;
+        : `<div class="notice info" style="margin-bottom:20px"><strong>Account status: Pending.</strong> Your account is waiting for owner approval — you do <strong>not</strong> need to verify your email to get access. Resources open automatically as soon as the owner approves you.</div>`;
     return wrap(`<div class="dashboard-top"><div><span class="eyebrow">Student dashboard</span><h1>Welcome, ${esc(me.full_name || user.email)}</h1><p>${esc(user.email)} · Your account and resource access at a glance.</p></div><div><span class="status ${esc(status)}">${esc(statusLabel(status))}</span><div class="form-actions"><button class="btn btn-secondary" id="logout-btn">Sign out</button></div></div></div>
     ${banner}
-    <div class="grid grid-3"><article class="card"><span class="kicker">Account</span><h3>${esc(statusLabel(status))}</h3><p>Email confirmation: ${user.email_confirmed_at ? 'Verified' : 'Not verified yet'}</p><div class="form-actions"><button class="btn btn-outline" id="reset-password-btn">Send password reset</button></div></article><article class="card"><span class="kicker">Active packages</span><h3>${ent.length}</h3><p>Only packages granted by the owner appear here.</p></article><article class="card"><span class="kicker">Support</span><h3>Need help?</h3><p>Message the academy on WhatsApp.</p><div class="form-actions"><a class="btn btn-outline" href="${waLink(c.whatsapp)}" target="_blank" rel="noopener noreferrer">Contact support ↗</a></div></article></div>
+    <div class="grid grid-3"><article class="card"><span class="kicker">Account</span><h3>${esc(statusLabel(status))}</h3><p>Email confirmation (optional): ${user.email_confirmed_at ? 'Verified' : 'Not verified — not required for access'}</p><div class="form-actions"><button class="btn btn-outline" id="reset-password-btn">Send password reset</button></div></article><article class="card"><span class="kicker">Active packages</span><h3>${ent.length}</h3><p>Only packages granted by the owner appear here.</p></article><article class="card"><span class="kicker">Support</span><h3>Need help?</h3><p>Message the academy on WhatsApp.</p><div class="form-actions"><a class="btn btn-outline" href="${waLink(c.whatsapp)}" target="_blank" rel="noopener noreferrer">Contact support ↗</a></div></article></div>
     <section class="section" style="padding-bottom:0"><div class="section-head"><h2>Your packages</h2></div>${ent.length ? `<div class="grid grid-3">${ent.map(e => `<article class="card"><span class="status approved">Active</span><h3>${esc(e.packages?.name || 'Preparation package')}</h3><p>Lifetime access is currently active.</p></article>`).join('')}</div>` : empty('No active packages', 'Purchase requests that are verified and approved by the owner will appear here.', '▤')}<div class="form-actions">${buttonLink('packages', 'Explore packages')}${buttonLink('free-notes', 'Free notes', 'btn btn-outline')}${buttonLink('notes', 'Browse notes', 'btn btn-outline')}</div></section>
     <section class="section" style="padding-bottom:0"><div class="section-head"><h2>Your payment requests</h2></div>${myPayments.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Package</th><th>Amount</th><th>Status</th><th>Submitted</th></tr></thead><tbody>${myPayments.map(p => `<tr><td>${esc(p.package_name_snapshot || p.package_id)}</td><td>${money(p.amount_pkr)}</td><td><span class="status ${esc(p.status)}">${esc(p.status)}</span></td><td>${fmtDate(p.created_at)}</td></tr>`).join('')}</tbody></table></div>` : empty('No payment requests yet', 'When you request a package, its verification status will appear here.', '₨')}</section>`);
   }
@@ -240,12 +262,14 @@
       A.logs = logs.data || [];
     }
     if (tab === 'students') {
-      const [users, ents, pkgs] = await Promise.all([
+      const [users, ents, pkgs, emails] = await Promise.all([
         db.from('profiles').select('id,full_name,phone,status,role,created_at').order('created_at', { ascending: false }).limit(500),
         db.from('entitlements').select('user_id,package_id,active,packages(name)'),
-        db.from('packages').select('id,name').order('sort_order')
+        db.from('packages').select('id,name').order('sort_order'),
+        db.rpc('admin_student_emails')
       ]);
       A.users = users.data || []; A.ents = ents.data || []; A.pkgs = pkgs.data || [];
+      A.emails = {}; (emails.data || []).forEach(e => { A.emails[e.user_id] = e; });
     }
     if (tab === 'packages') { const q = await db.from('packages').select('*').order('sort_order'); A.packages = q.data || []; }
     if (tab === 'payments') { const q = await db.from('payment_requests').select('id,user_id,package_id,package_name_snapshot,transaction_ref,amount_pkr,status,created_at,reviewed_at,receipt_path').order('created_at', { ascending: false }).limit(200); A.payments = q.data || []; }
@@ -272,25 +296,32 @@
   }
 
   function adminStudents() {
-    const users = A.users || [], ents = A.ents || [], pkgs = A.pkgs || [];
+    const users = A.users || [], ents = A.ents || [], pkgs = A.pkgs || [], emails = A.emails || {};
     const entFor = uid => ents.filter(e => e.user_id === uid && e.active).map(e => e.packages?.name || e.package_id);
     const rows = users.map(u => {
       const isStudent = u.role === 'student';
       const mine = entFor(u.id);
+      const em = emails[u.id];
       let actions = '—';
+      let emailCell = '—';
       if (isStudent) {
         const btns = [];
         if (u.status !== 'approved') btns.push(`<button class="btn btn-outline" data-user-action="${esc(u.id)}" data-status="approved">Approve</button>`);
         if (u.status !== 'rejected') btns.push(`<button class="btn btn-danger" data-user-action="${esc(u.id)}" data-status="rejected">Reject</button>`);
         if (u.status === 'approved') btns.push(`<button class="btn btn-danger" data-user-action="${esc(u.id)}" data-status="suspended">Suspend</button>`);
         if (u.status === 'suspended') btns.push(`<button class="btn btn-outline" data-user-action="${esc(u.id)}" data-status="approved">Restore</button>`);
+        const wa = studentReminderLink(u, em);
+        if (wa) btns.push(`<a class="btn btn-outline" target="_blank" rel="noopener noreferrer" href="${esc(wa)}">WhatsApp</a>`);
         actions = `<div class="row-actions">${btns.join('')}</div>`;
+        emailCell = em
+          ? `${esc(em.email || '—')}<br><span class="status ${em.email_verified ? 'approved' : 'rejected'}">${em.email_verified ? 'Email verified' : 'Email NOT verified'}</span>`
+          : '<span class="muted">Email hidden</span>';
       }
-      return `<tr data-searchrow="${esc((u.full_name || '') + ' ' + (u.phone || '') + ' ' + u.status)}"><td>${esc(u.full_name || '—')}</td><td>${esc(u.phone || '—')}</td><td><span class="status ${esc(u.status)}">${esc(u.status)}</span></td><td>${esc(u.role)}</td><td class="muted">${mine.length ? mine.map(esc).join(', ') : (isStudent ? 'None' : '—')}</td><td>${fmtDate(u.created_at)}</td><td>${actions}</td></tr>`;
+      return `<tr data-searchrow="${esc((u.full_name || '') + ' ' + (u.phone || '') + ' ' + (em && em.email || '') + ' ' + u.status)}"><td>${esc(u.full_name || '—')}</td><td>${esc(u.phone || '—')}</td><td>${emailCell}</td><td><span class="status ${esc(u.status)}">${esc(u.status)}</span></td><td>${esc(u.role)}</td><td class="muted">${mine.length ? mine.map(esc).join(', ') : (isStudent ? 'None' : '—')}</td><td>${fmtDate(u.created_at)}</td><td>${actions}</td></tr>`;
     }).join('');
-    return `<section class="admin-panel"><h2>Student management</h2><p class="muted">Approve only after checking the account. Approval requires a verified email (enforced by the database). Suspend instantly removes protected access.</p>
-    <div class="filter-bar"><input type="search" id="student-search" placeholder="Search name, phone or status…"></div>
-    <div class="table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>Contact</th><th>Status</th><th>Role</th><th>Packages</th><th>Joined</th><th>Actions</th></tr></thead><tbody id="student-rows">${rows || '<tr><td colspan="7">No accounts found.</td></tr>'}</tbody></table></div>
+    return `<section class="admin-panel"><h2>Student management</h2><p class="muted">Approve only after checking the account. Email verification is <strong>not</strong> required any more — pressing Approve gives the student notes access immediately. If a student has not verified their email or has not logged in yet, use the WhatsApp button to send them a reminder in one click.</p>
+    <div class="filter-bar"><input type="search" id="student-search" placeholder="Search name, phone, email or status…"></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Status</th><th>Role</th><th>Packages</th><th>Joined</th><th>Actions</th></tr></thead><tbody id="student-rows">${rows || '<tr><td colspan="8">No accounts found.</td></tr>'}</tbody></table></div>
     <div class="card" style="margin-top:20px"><h3>Grant or revoke package access</h3><p class="muted">Use this to give a student a package manually (e.g. after verifying an offline payment) or to revoke it. Every change is written to the audit log.</p>
     <form id="entitlement-form" class="inline-form" style="margin-top:12px"><select name="user_id" required><option value="">Select student…</option>${users.filter(u => u.role === 'student').map(u => `<option value="${esc(u.id)}">${esc(u.full_name || u.phone || u.id)}</option>`).join('')}</select><select name="package_id" required><option value="">Select package…</option>${pkgs.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select><button class="btn btn-primary" type="submit" data-active="true">Grant</button><button class="btn btn-danger" type="submit" data-active="false">Revoke</button></form></div></section>`;
   }
@@ -573,7 +604,7 @@
           if (password.length < 8) throw new Error('Password must be at least 8 characters.');
           const { data, error } = await db.auth.signUp({ email, password, options: { data: { full_name, phone }, emailRedirectTo: location.origin + location.pathname + '#dashboard' } });
           if (error) throw error;
-          toast(data.session ? 'Account created. Verify your email and wait for approval.' : 'Account created. Check your email to verify the account, then wait for owner approval.');
+          toast(data.session ? 'Account created. The owner will approve it shortly — you can already sign in.' : 'Account created. Check your email to confirm the address, then wait for owner approval.');
           if (data.session) { session = data.session; await refreshProfile(); location.hash = '#dashboard'; }
         } else { const { data, error } = await db.auth.signInWithPassword({ email, password }); if (error) throw error; session = data.session; await refreshProfile(); toast('Signed in.'); location.hash = '#dashboard'; }
       } catch (err) { toast(err.message || 'Authentication failed.'); } finally { submit.disabled = false; }
