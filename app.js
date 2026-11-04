@@ -20,7 +20,9 @@
 
   // ---------- State ----------
   let session = null, profile = null, currentPage = 'home';
+  let openThreadId = null;
   let notesCache = [], packagesCache = [], testsCache = [], announcementsCache = [], prCache = [], settings = {};
+  let guidesCache = [], reviewsCache = [];
   let adminTab = 'overview';
   const notesView = { q: '', category: '', subject: '', access: '', page: 1 };
   const PAGE_SIZE = 9;
@@ -101,6 +103,29 @@
   async function loadPackageResources() { if (!db) return; const { data, error } = await db.from('package_resources').select('package_id,resource_id,is_preview'); if (!error) prCache = data || []; }
   async function loadTests() { if (!db) return; const { data, error } = await db.from('practice_tests').select('*').eq('published', true).order('created_at', { ascending: false }); if (!error) testsCache = data || []; }
   async function loadAnnouncements() { if (!db) return; const { data, error } = await db.from('announcements').select('*').eq('published', true).order('created_at', { ascending: false }); if (!error) announcementsCache = data || []; }
+  async function loadGuides() { if (!db) return; const { data, error } = await db.from('guides').select('*').eq('published', true).order('sort_order').order('created_at', { ascending: false }); if (!error) guidesCache = data || []; }
+  async function loadReviews() { if (!db) return; const { data, error } = await db.from('reviews').select('id,name,rating,body,context,status,admin_reply,created_at').eq('status', 'published').order('created_at', { ascending: false }); if (!error) reviewsCache = data || []; }
+
+  // ---------- Media helpers ----------
+  const GUIDE_CATS = { interview: 'Interview tips', tips: 'Preparation tips', information: 'Information', call: 'Interview call', other: 'Guidance' };
+  const guideCat = c => GUIDE_CATS[c] || c || 'Guidance';
+  // Accepts a YouTube/Vimeo watch link, an embed link or a direct video file.
+  function videoEmbed(url) {
+    const u = String(url || '').trim();
+    if (!u) return '';
+    if (!/^https:\/\//i.test(u)) return '';
+    let id = '';
+    const y = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/);
+    if (y) id = y[1];
+    if (id) return `<div class="video-wrap"><iframe src="https://www.youtube-nocookie.com/embed/${esc(id)}" title="Guidance video" loading="lazy" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`;
+    const v = u.match(/vimeo\.com\/(\d+)/);
+    if (v) return `<div class="video-wrap"><iframe src="https://player.vimeo.com/video/${esc(v[1])}" title="Guidance video" loading="lazy" allow="fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`;
+    if (/\.(mp4|webm|ogg|mov)$/i.test(u)) return `<div class="video-wrap"><video controls preload="metadata" playsinline src="${esc(u)}"></video></div>`;
+    return '';
+  }
+  const stars = n => { const r = Math.max(0, Math.min(5, Number(n) || 0)); return `<span class="stars" aria-label="${r} out of 5">${'★'.repeat(r)}${'☆'.repeat(5 - r)}</span>`; };
+  const guideImage = g => (g.image_url || '').trim();
+  const mediaUrl = path => (path && db) ? db.storage.from('guidance-media').getPublicUrl(path).data.publicUrl : '';
   const packagesForResource = (rid, legacyPid) => { const set = new Set(); if (legacyPid) set.add(legacyPid); prCache.forEach(pr => { if (pr.resource_id === rid) set.add(pr.package_id); }); return [...set]; };
 
   async function getResourceAccess() {
@@ -118,6 +143,33 @@
       })
       // A student only sees a PAID note if they actually own its package.
       .filter(r => r.access_type === 'free' || r.has_access);
+  }
+
+  // ---------- Announcement ticker (visible on every page) ----------
+  let tickerIdx = 0, tickerTimer = null, tickerHidden = false;
+  function updateTicker() {
+    const el = $('#ticker');
+    if (!el) return;
+    const list = (announcementsCache || []).filter(a => a && (a.title || a.body));
+    if (tickerTimer) { clearInterval(tickerTimer); tickerTimer = null; }
+    if (tickerHidden || !list.length) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    if (tickerIdx >= list.length) tickerIdx = 0;
+    const link = $('#ticker-link', el), dots = $('#ticker-dots', el);
+    const show = () => {
+      const a = list[tickerIdx];
+      const body = String(a.body || '').replace(/\s+/g, ' ').trim();
+      link.textContent = body ? `${a.title} — ${body.length > 150 ? body.slice(0, 150) + '…' : body}` : a.title;
+      link.classList.remove('slide-in'); void link.offsetWidth; link.classList.add('slide-in');
+      if (dots) {
+        dots.innerHTML = list.length > 1 ? list.map((_, i) => `<button type="button" class="dot ${i === tickerIdx ? 'on' : ''}" data-ticker="${i}" aria-label="Announcement ${i + 1}"></button>`).join('') : '';
+        $$('[data-ticker]', dots).forEach(d => d.addEventListener('click', () => { tickerIdx = Number(d.dataset.ticker); show(); restart(); }));
+      }
+    };
+    const restart = () => { if (tickerTimer) clearInterval(tickerTimer); if (list.length > 1) tickerTimer = setInterval(() => { tickerIdx = (tickerIdx + 1) % list.length; show(); }, 5200); };
+    show(); restart();
+    const close = $('#ticker-close', el);
+    if (close) close.onclick = () => { tickerHidden = true; updateTicker(); };
   }
 
   // ---------- Public pages ----------
@@ -156,8 +208,49 @@
   async function renderAnnouncements() {
     // Fetch fresh so a newly published announcement shows without a full page reload.
     if (db) { const { data, error } = await db.from('announcements').select('*').eq('published', true).order('created_at', { ascending: false }); if (!error) announcementsCache = data || []; }
-    return wrap(`${pageHead('Updates', 'Announcements', 'Updates published by the ISSB ASPIRANTS team.')}
-    <div class="grid">${announcementsCache.length ? announcementsCache.map(a => `<article class="card"><span class="kicker">${fmtDate(a.created_at)}</span><h3>${esc(a.title)}</h3><p style="white-space:pre-wrap">${esc(a.body)}</p></article>`).join('') : empty('No announcements yet', 'New updates will appear here when published.', '◷')}</div>`);
+    updateTicker();
+    return wrap(`${pageHead('Updates', 'Announcements', 'Updates published by the ISSB ASPIRANTS team. The newest one also runs in the ticker at the top of every page.')}
+    <div class="grid">${announcementsCache.length ? announcementsCache.map(a => `<article class="card"><span class="kicker">${fmtDate(a.created_at)}</span><h3>${esc(a.title)}</h3><p style="white-space:pre-wrap"><strong>${esc(a.body)}</strong></p></article>`).join('') : empty('No announcements yet', 'New updates will appear here when published.', '◷')}</div>`);
+  }
+
+  // ---------- Guidance centre (admin-managed tips, pictures, videos) ----------
+  const guidesView = { cat: '' };
+  async function renderGuidance() {
+    await loadGuides();
+    const all = guidesCache || [];
+    const cats = [...new Set(all.map(g => g.category).filter(Boolean))];
+    const list = guidesView.cat ? all.filter(g => g.category === guidesView.cat) : all;
+    const chips = all.length > 1 ? `<div class="filter-bar">${['', ...cats].map(c => `<button class="btn ${guidesView.cat === c ? 'btn-primary' : 'btn-outline'}" data-guide-cat="${esc(c)}">${c ? esc(guideCat(c)) : 'All guidance'}</button>`).join('')}</div>` : '';
+    const cards = list.map(g => {
+      const pts = (g.points || []).filter(p => String(p || '').trim());
+      const img = guideImage(g);
+      const vid = videoEmbed(g.video_url);
+      return `<article class="card guide-card">${img ? `<div class="guide-media"><img src="${esc(img)}" alt="${esc(g.title)}" loading="lazy" onerror="this.parentNode.style.display='none'"></div>` : ''}
+      <div class="resource-meta"><span class="tag">${esc(guideCat(g.category))}</span><span class="tag">${fmtDate(g.created_at)}</span></div>
+      <h3>${esc(g.title)}</h3>
+      ${g.summary ? `<p><strong>${esc(g.summary)}</strong></p>` : ''}
+      ${pts.length ? `<ul class="points">${pts.map(p => `<li><strong>${esc(p)}</strong></li>`).join('')}</ul>` : ''}
+      ${vid || (String(g.video_url || '').trim() ? `<p class="form-note"><a href="${esc(g.video_url)}" target="_blank" rel="noopener noreferrer">Watch the video ↗</a></p>` : '')}
+      </article>`;
+    }).join('');
+    return wrap(`${pageHead('Guidance centre', 'Interview tips, guidance & calls', 'Practical guidance published by the academy — pictures, points and videos, so preparation is not guesswork.')}
+    ${chips}
+    <div class="grid grid-3">${cards || empty('No guidance published yet', 'Interview tips, information and video guidance will appear here as soon as the academy publishes them.', '✦')}</div>`);
+  }
+
+  // ---------- Student reviews ----------
+  async function renderReviews() {
+    await loadReviews();
+    const list = reviewsCache || [];
+    const avg = list.length ? (list.reduce((s, r) => s + (Number(r.rating) || 0), 0) / list.length) : 0;
+    let mine = [];
+    if (db && session) { const q = await db.from('reviews').select('id,rating,body,context,status,admin_reply,created_at').eq('user_id', session.user.id).order('created_at', { ascending: false }).limit(5); if (!q.error) mine = q.data || []; }
+    const cards = list.map(r => `<article class="card review-card">${stars(r.rating)}<h3>${esc(r.name || 'A student')}</h3><span class="kicker">${esc(r.context || 'Initial test')} · ${fmtDate(r.created_at)}</span><p><strong>${esc(r.body)}</strong></p>${r.admin_reply ? `<div class="reply"><strong>Academy response:</strong> ${esc(r.admin_reply)}</div>` : ''}</article>`).join('');
+    return wrap(`${pageHead('Student reviews', 'Experiences from our students', 'Reviews written by students who prepared with ISSB ASPIRANTS material and sat the initial test. Published after academy review.')}
+    <div class="stat-grid"><div class="stat-card green"><strong>${list.length}</strong><span>Reviews published</span></div><div class="stat-card"><strong>${avg ? avg.toFixed(1) : '—'}</strong><span>Average rating out of 5</span></div><div class="stat-card amber"><strong>${list.filter(r => r.admin_reply).length}</strong><span>Academy responses</span></div></div>
+    <div class="grid grid-3" style="margin-top:20px">${cards || empty('No reviews published yet', 'Be the first to share your experience after your initial test.', '★')}</div>
+    ${mine.length ? `<section class="section" style="padding-bottom:0"><div class="section-head"><h2>Your reviews</h2></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Rating</th><th>Context</th><th>Your review</th><th>Status</th><th>Academy response</th></tr></thead><tbody>${mine.map(r => `<tr><td>${stars(r.rating)}</td><td>${esc(r.context || '—')}</td><td class="muted" style="max-width:280px">${esc(r.body)}</td><td><span class="status ${r.status === 'published' ? 'approved' : r.status === 'rejected' ? 'rejected' : 'pending'}">${esc(r.status)}</span></td><td class="muted">${esc(r.admin_reply || '—')}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
+    <div class="notice info" style="margin-top:22px"><strong>Share your experience:</strong> ${session ? 'open your dashboard and use the “Share your experience” panel. Reviews appear here once the academy publishes them.' : 'sign in with your student account, then use the “Share your experience” panel on your dashboard.'} ${session ? buttonLink('dashboard', 'Go to dashboard') : buttonLink('auth', 'Student login')}</div>`);
   }
 
   function renderContact() {
@@ -216,6 +309,15 @@
     if (db && status === 'approved') { const q = await db.from('entitlements').select('id,package_id,active,packages(name)').eq('user_id', user.id).eq('active', true); if (!q.error) ent = q.data || []; }
     let myPayments = [];
     if (db) { const q = await db.from('payment_requests').select('id,package_id,package_name_snapshot,amount_pkr,status,created_at').eq('user_id', user.id).order('created_at', { ascending: false }).limit(10); if (!q.error) myPayments = q.data || []; }
+    let myReviews = [], threads = [], msgs = [];
+    if (db) {
+      const rq = await db.from('reviews').select('id,rating,body,context,status,admin_reply,created_at').eq('user_id', user.id).order('created_at', { ascending: false }).limit(10);
+      if (!rq.error) myReviews = rq.data || [];
+      const tq = await db.from('threads').select('id,subject,status,last_message_at').eq('user_id', user.id).order('last_message_at', { ascending: false }).limit(25);
+      if (!tq.error) threads = tq.data || [];
+      openThreadId = threads.length ? (threads.some(t => t.id === openThreadId) ? openThreadId : threads[0].id) : null;
+      if (openThreadId) { const mq = await db.from('thread_messages').select('id,sender_id,body,created_at').eq('thread_id', openThreadId).order('created_at'); if (!mq.error) msgs = mq.data || []; }
+    }
     const banner = status === 'approved' ? '' : status === 'rejected'
       ? `<div class="notice error" style="margin-bottom:20px"><strong>Account status: Rejected.</strong> Your account was not approved. Please contact the academy on WhatsApp (${esc(c.whatsapp)}) for clarification.</div>`
       : status === 'suspended'
@@ -225,13 +327,21 @@
     ${banner}
     <div class="grid grid-3"><article class="card"><span class="kicker">Account</span><h3>${esc(statusLabel(status))}</h3><p>Email confirmation (optional): ${user.email_confirmed_at ? 'Verified' : 'Not verified — not required for access'}</p><div class="form-actions"><button class="btn btn-outline" id="reset-password-btn">Send password reset</button></div></article><article class="card"><span class="kicker">Active packages</span><h3>${ent.length}</h3><p>Only packages granted by the owner appear here.</p></article><article class="card"><span class="kicker">Support</span><h3>Need help?</h3><p>Message the academy on WhatsApp.</p><div class="form-actions"><a class="btn btn-outline" href="${waLink(c.whatsapp)}" target="_blank" rel="noopener noreferrer">Contact support ↗</a></div></article></div>
     <section class="section" style="padding-bottom:0"><div class="section-head"><h2>Your packages</h2></div>${ent.length ? `<div class="grid grid-3">${ent.map(e => `<article class="card"><span class="status approved">Active</span><h3>${esc(e.packages?.name || 'Preparation package')}</h3><p>Lifetime access is currently active.</p></article>`).join('')}</div>` : empty('No active packages', 'Purchase requests that are verified and approved by the owner will appear here.', '▤')}<div class="form-actions">${buttonLink('packages', 'Explore packages')}${buttonLink('free-notes', 'Free notes', 'btn btn-outline')}${buttonLink('notes', 'Browse notes', 'btn btn-outline')}</div></section>
-    <section class="section" style="padding-bottom:0"><div class="section-head"><h2>Your payment requests</h2></div>${myPayments.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Package</th><th>Amount</th><th>Status</th><th>Submitted</th></tr></thead><tbody>${myPayments.map(p => `<tr><td>${esc(p.package_name_snapshot || p.package_id)}</td><td>${money(p.amount_pkr)}</td><td><span class="status ${esc(p.status)}">${esc(p.status)}</span></td><td>${fmtDate(p.created_at)}</td></tr>`).join('')}</tbody></table></div>` : empty('No payment requests yet', 'When you request a package, its verification status will appear here.', '₨')}</section>`);
+    <section class="section" style="padding-bottom:0"><div class="section-head"><h2>Your payment requests</h2></div>${myPayments.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Package</th><th>Amount</th><th>Status</th><th>Submitted</th></tr></thead><tbody>${myPayments.map(p => `<tr><td>${esc(p.package_name_snapshot || p.package_id)}</td><td>${money(p.amount_pkr)}</td><td><span class="status ${esc(p.status)}">${esc(p.status)}</span></td><td>${fmtDate(p.created_at)}</td></tr>`).join('')}</tbody></table></div>` : empty('No payment requests yet', 'When you request a package, its verification status will appear here.', '₨')}</section>
+    <section class="section" style="padding-bottom:0"><div class="section-head"><h2>Messages to the academy</h2><p>Response panel — a direct conversation with the owner or an admin.</p></div>
+    <div class="thread-layout"><aside class="thread-list">${threads.length ? threads.map(t => `<button type="button" class="thread-item ${t.id === openThreadId ? 'on' : ''}" data-thread="${esc(t.id)}"><strong>${esc(t.subject)}</strong><small>${fmtDate(t.last_message_at)} · ${esc(t.status)}</small></button>`).join('') : '<p class="muted" style="padding:12px">No conversations yet.</p>'}</aside>
+    <div class="thread-main">${openThreadId ? `<div class="bubbles">${msgs.length ? msgs.map(m => `<div class="bubble ${m.sender_id === user.id ? 'me' : 'them'}"><span class="who">${m.sender_id === user.id ? 'You' : 'Academy'}</span><p>${esc(m.body)}</p><small>${fmtDate(m.created_at)}</small></div>`).join('') : '<p class="muted">No messages in this conversation yet.</p>'}</div><form id="thread-reply" class="inline-form"><input name="body" required maxlength="3000" placeholder="Write your reply…"><button class="btn btn-primary" type="submit">Send →</button></form>` : '<p class="muted">Start a conversation below to message the academy.</p>'}</div></div>
+    <form id="thread-new" class="card" style="margin-top:16px"><h3>Start a new conversation</h3><div class="form-grid"><div class="field"><label>Subject</label><input name="subject" required maxlength="150" placeholder="e.g. Question about a package"></div><div class="field full"><label>Message</label><textarea name="body" required maxlength="3000"></textarea></div></div><div class="form-actions"><button class="btn btn-primary" type="submit">Send to academy →</button></div></form></section>
+    <section class="section" style="padding-bottom:0"><div class="section-head"><h2>Share your experience</h2><p>Write a review after your initial test — it helps the next batch of students.</p></div>
+    <form id="review-form" class="card"><div class="form-grid"><div class="field"><label>Rating</label><select name="rating">${[5, 4, 3, 2, 1].map(n => `<option value="${n}">${'★'.repeat(n)}${'☆'.repeat(5 - n)} (${n})</option>`).join('')}</select></div><div class="field"><label>What did you attempt?</label><input name="context" maxlength="80" value="Initial test"></div><div class="field full"><label>Your experience</label><textarea name="body" required maxlength="1500" placeholder="How did the notes, tests and guidance help you?"></textarea></div></div><div class="form-actions"><button class="btn btn-primary" type="submit">Submit review</button></div><p class="form-note">Reviews appear on the public Reviews page once the academy publishes them. Your name is taken from your profile.</p></form>
+    ${myReviews.length ? `<div class="table-wrap" style="margin-top:14px"><table class="data-table"><thead><tr><th>Rating</th><th>Context</th><th>Your review</th><th>Status</th><th>Academy response</th><th>Date</th></tr></thead><tbody>${myReviews.map(r => `<tr><td>${stars(r.rating)}</td><td>${esc(r.context || '—')}</td><td class="muted" style="max-width:260px">${esc(r.body)}</td><td><span class="status ${r.status === 'published' ? 'approved' : r.status === 'rejected' ? 'rejected' : 'pending'}">${esc(r.status)}</span></td><td class="muted">${esc(r.admin_reply || '—')}</td><td>${fmtDate(r.created_at)}</td></tr>`).join('')}</tbody></table></div>` : ''}</section>`);
   }
 
   // ================= ADMIN DASHBOARD =================
   const ADMIN_TABS = [
     ['overview', 'Overview', '▦'], ['students', 'Students', '👥'], ['packages', 'Packages', '▣'],
     ['payments', 'Payments', '₨'], ['resources', 'Notes & PDFs', '▤'], ['tests', 'Practice tests', '◈'],
+    ['guidance', 'Guidance', '✦'], ['reviews', 'Reviews', '★'], ['responses', 'Responses', '💬'],
     ['announcements', 'Announcements', '◷'], ['contact', 'Contact inbox', '✉'], ['settings', 'Settings', '⚙']
   ];
 
@@ -276,6 +386,19 @@
     if (tab === 'resources') { const [res, pkgs] = await Promise.all([db.from('resources').select('id,title,category,subject,file_type,access_type,is_preview,package_id,published,storage_path,created_at').order('created_at', { ascending: false }).limit(500), db.from('packages').select('id,name').order('sort_order')]); A.resources = res.data || []; A.pkgs = pkgs.data || []; await loadPackageResources(); }
     if (tab === 'tests') { const q = await db.from('practice_tests').select('*').order('created_at', { ascending: false }).limit(200); A.tests = q.data || []; }
     if (tab === 'announcements') { const q = await db.from('announcements').select('*').order('created_at', { ascending: false }).limit(200); A.announcements = q.data || []; }
+    if (tab === 'guidance') { const q = await db.from('guides').select('*').order('sort_order').order('created_at', { ascending: false }).limit(300); A.guides = q.data || []; }
+    if (tab === 'reviews') { const q = await db.from('reviews').select('*').order('created_at', { ascending: false }).limit(300); A.reviews = q.data || []; }
+    if (tab === 'responses') {
+      const [t, p] = await Promise.all([
+        db.from('threads').select('id,user_id,subject,status,last_message_at,created_at').order('last_message_at', { ascending: false }).limit(200),
+        db.from('profiles').select('id,full_name,phone')
+      ]);
+      A.threads = t.data || [];
+      A.threadNames = {}; (p.data || []).forEach(x => { A.threadNames[x.id] = x; });
+      if (!A.threads.some(x => x.id === A.openThread)) A.openThread = A.threads.length ? A.threads[0].id : null;
+      A.threadMsgs = [];
+      if (A.openThread) { const m = await db.from('thread_messages').select('id,sender_id,body,created_at').eq('thread_id', A.openThread).order('created_at'); if (!m.error) A.threadMsgs = m.data || []; }
+    }
     if (tab === 'contact') { const q = await db.from('contact_messages').select('*').order('created_at', { ascending: false }).limit(200); A.messages = q.data || []; }
     if (tab === 'settings') { await loadSettings(); }
   }
@@ -370,6 +493,44 @@
       <div class="form-actions"><button class="btn btn-primary" type="submit">Save test link</button><button class="btn btn-outline" type="button" id="test-reset">Clear</button></div></form></section>`;
   }
 
+  function adminGuidance() {
+    const list = A.guides || [];
+    return `<section class="admin-panel"><h2>Guidance centre</h2><p class="muted">Publish interview tips, information or interview calls with pictures, bold bullet points and videos. Students see them on the public Guidance page the moment you publish.</p>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Title</th><th>Category</th><th>Media</th><th>Points</th><th>Published</th><th>Order</th><th>Actions</th></tr></thead><tbody>${list.map(g => `<tr><td>${esc(g.title)}</td><td>${esc(guideCat(g.category))}</td><td class="muted">${g.image_url ? '🖼 picture' : '—'}${g.video_url ? ' · ▶ video' : ''}</td><td>${(g.points || []).filter(p => String(p || '').trim()).length}</td><td><span class="status ${g.published ? 'approved' : ''}">${g.published ? 'yes' : 'no'}</span></td><td>${g.sort_order || 0}</td><td><div class="row-actions"><button class="btn btn-outline" data-edit-guide="${esc(g.id)}">Edit</button><button class="btn btn-danger" data-delete-guide="${esc(g.id)}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="7">No guidance added yet.</td></tr>'}</tbody></table></div>
+    <form id="guide-form" class="card" style="margin-top:20px"><h3 id="guide-form-title">Add guidance</h3><input type="hidden" name="editing" value="">
+      <div class="form-grid">
+        <div class="field"><label>Title</label><input name="title" required maxlength="160" placeholder="e.g. ISSB interview day — what to wear"></div>
+        <div class="field"><label>Category</label><select name="category"><option value="interview">Interview tips</option><option value="tips">Preparation tips</option><option value="information">Information</option><option value="call">Interview call</option><option value="other">Other guidance</option></select></div>
+        <div class="field full"><label>Short summary</label><textarea name="summary" maxlength="600"></textarea></div>
+        <div class="field full"><label>Points (one per line — shown in bold to students)</label><textarea name="points" maxlength="4000" placeholder="Reach the board 30 minutes early&#10;Carry your original CNIC and call letter&#10;Answer honestly, do not memorise"></textarea></div>
+        <div class="field"><label>Display order</label><input name="sort_order" type="number" value="0"></div>
+        <div class="field full"><label>Video link (YouTube, Vimeo or direct .mp4)</label><input name="video_url" type="url" placeholder="https://www.youtube.com/watch?v=…"></div>
+        <div class="field full"><label>Video file (optional, max 50 MB — a YouTube link is safer for long videos)</label><input name="video" type="file" accept="video/mp4,video/webm"></div>
+        <div class="field full"><label>Picture — upload a file</label><input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></div>
+        <div class="field full"><label>…or paste a picture URL (an uploaded file wins if you give both)</label><input name="image_url" type="url" placeholder="https://…"></div>
+      </div>
+      <label class="checkline"><input type="checkbox" name="published" checked> Publish immediately</label>
+      <div class="progress hidden" id="guide-progress"><span></span></div>
+      <div class="form-actions"><button class="btn btn-primary" type="submit" id="guide-save">Save guidance</button><button class="btn btn-outline" type="button" id="guide-reset">Clear</button></div></form></section>`;
+  }
+
+  function adminReviews() {
+    const list = A.reviews || [];
+    return `<section class="admin-panel"><h2>Student reviews</h2><p class="muted">Reviews submitted by students from their dashboard. Nothing is public until you publish it. Add an academy response and it shows under the review on the public page.</p>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Student</th><th>Rating</th><th>Context</th><th>Review</th><th>Status</th><th>Actions</th></tr></thead><tbody>${list.map(r => `<tr><td>${esc(r.name || '—')}</td><td>${stars(r.rating)}</td><td>${esc(r.context || '—')}</td><td class="muted" style="max-width:300px;white-space:pre-wrap">${esc(r.body)}${r.admin_reply ? `<br><strong>Reply:</strong> ${esc(r.admin_reply)}` : ''}</td><td><span class="status ${r.status === 'published' ? 'approved' : r.status === 'rejected' ? 'rejected' : 'pending'}">${esc(r.status)}</span></td><td><div class="row-actions">${r.status !== 'published' ? `<button class="btn btn-outline" data-review-status="${esc(r.id)}" data-status="published">Publish</button>` : ''}${r.status !== 'rejected' ? `<button class="btn btn-danger" data-review-status="${esc(r.id)}" data-status="rejected">Reject</button>` : ''}<button class="btn btn-secondary" data-review-reply="${esc(r.id)}">Reply</button><button class="btn btn-danger" data-review-delete="${esc(r.id)}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="6">No reviews submitted yet.</td></tr>'}</tbody></table></div></section>`;
+  }
+
+  function adminResponses() {
+    const threads = A.threads || [], names = A.threadNames || {}, msgs = A.threadMsgs || [];
+    const open = threads.find(t => t.id === A.openThread) || null;
+    const who = id => { const p = names[id]; return (p && (p.full_name || p.phone)) || 'Student'; };
+    return `<section class="admin-panel"><h2>Response panel</h2><p class="muted">Two-way conversations started by students from their dashboard. Your reply appears in their Messages panel immediately.</p>
+    <div class="thread-layout"><aside class="thread-list">${threads.length ? threads.map(t => `<button type="button" class="thread-item ${t.id === A.openThread ? 'on' : ''}" data-open-thread="${esc(t.id)}"><strong>${esc(t.subject)}</strong><small>${esc(who(t.user_id))} · ${fmtDate(t.last_message_at)} · ${esc(t.status)}</small></button>`).join('') : '<p class="muted" style="padding:12px">No conversations yet.</p>'}</aside>
+    <div class="thread-main">${open ? `<div class="bubbles">${msgs.length ? msgs.map(m => `<div class="bubble ${m.sender_id === open.user_id ? 'them' : 'me'}"><span class="who">${m.sender_id === open.user_id ? esc(who(open.user_id)) : 'Academy (you)'}</span><p>${esc(m.body)}</p><small>${fmtDate(m.created_at)}</small></div>`).join('') : '<p class="muted">No messages yet.</p>'}</div>
+    <form id="admin-thread-reply" class="inline-form"><input type="hidden" name="thread_id" value="${esc(open.id)}"><input name="body" required maxlength="3000" placeholder="Write your reply…"><button class="btn btn-primary" type="submit">Send →</button></form>
+    <div class="form-actions" style="margin-top:10px">${open.status === 'open' ? `<button class="btn btn-outline" data-thread-status="${esc(open.id)}" data-status="closed">Close conversation</button>` : `<button class="btn btn-outline" data-thread-status="${esc(open.id)}" data-status="open">Reopen conversation</button>`}<a class="btn btn-secondary" href="${waLink((names[open.user_id] || {}).phone)}" target="_blank" rel="noopener noreferrer">WhatsApp this student ↗</a><button class="btn btn-danger" data-thread-delete="${esc(open.id)}">Delete conversation</button></div>` : '<p class="muted">Select a conversation on the left.</p>'}</div></div></section>`;
+  }
+
   function adminAnnouncements() {
     const list = A.announcements || [];
     return `<section class="admin-panel"><h2>Announcements</h2><p class="muted">Create, edit, publish or unpublish academy updates. Unpublishing acts as archiving (hidden from students).</p>
@@ -406,6 +567,9 @@
       case 'payments': return adminPayments();
       case 'resources': return adminResources();
       case 'tests': return adminTests();
+      case 'guidance': return adminGuidance();
+      case 'reviews': return adminReviews();
+      case 'responses': return adminResponses();
       case 'announcements': return adminAnnouncements();
       case 'contact': return adminContact();
       case 'settings': return adminSettings();
@@ -421,7 +585,7 @@
   }
 
   // ---------- Router ----------
-  const renderers = { home: renderHome, about: renderAbout, packages: renderPackages, notes: () => renderNotes(false), 'free-notes': () => renderNotes(true), tests: renderTests, announcements: renderAnnouncements, contact: renderContact, auth: renderAuth, dashboard: renderDashboard, admin: renderAdmin };
+  const renderers = { home: renderHome, about: renderAbout, packages: renderPackages, notes: () => renderNotes(false), 'free-notes': () => renderNotes(true), tests: renderTests, guidance: renderGuidance, reviews: renderReviews, announcements: renderAnnouncements, contact: renderContact, auth: renderAuth, dashboard: renderDashboard, admin: renderAdmin };
 
   async function render(page) {
     currentPage = page;
@@ -528,7 +692,7 @@
   async function requestPackage(packageId, packageName) {
     if (!db) { toast('Configure Supabase first.'); return; }
     if (!session) { toast('Please create an account or sign in first.'); location.hash = '#auth'; return; }
-    if (!isApproved()) { toast(profile && profile.status === 'suspended' ? 'Your account is suspended.' : 'Verify your email and wait for owner approval before requesting a package.'); location.hash = '#dashboard'; return; }
+    if (!isApproved()) { toast(profile && profile.status === 'suspended' ? 'Your account is suspended.' : 'Wait for owner approval before requesting a package.'); location.hash = '#dashboard'; return; }
     const pkg = (packagesCache.length ? packagesCache : packageDefaults).find(p => p.id === packageId);
     if (!pkg) { toast('Package not found.'); return; }
     openPurchaseModal(pkg);
@@ -586,6 +750,73 @@
       await reloadAdmin();
     } catch (err) { bar.classList.remove('busy'); bar.classList.add('hidden'); toast(err.message || 'Upload failed.'); }
     finally { saveBtn.disabled = false; }
+  }
+
+  // ---------- Guidance media upload + save ----------
+  async function saveGuide(existing) {
+    const form = $('#guide-form');
+    const f = new FormData(form);
+    const title = String(f.get('title') || '').trim();
+    if (!title) { toast('Enter a title.'); return; }
+    const btn = $('#guide-save'), bar = $('#guide-progress');
+    const imgFile = (form.querySelector('input[name="image"]').files || [])[0];
+    const vidFile = (form.querySelector('input[name="video"]').files || [])[0];
+    let image_url = String(f.get('image_url') || '').trim();
+    let video_url = String(f.get('video_url') || '').trim();
+    if (image_url && !/^https:\/\//i.test(image_url)) { toast('The picture URL must start with https://'); return; }
+    if (video_url && !/^https:\/\//i.test(video_url)) { toast('The video URL must start with https://'); return; }
+    btn.disabled = true;
+    try {
+      if (imgFile || vidFile) {
+        bar.classList.remove('hidden'); bar.classList.add('busy');
+        const ext = (name, fb) => String(name || '').split('.').pop().toLowerCase() || fb;
+        if (imgFile) {
+          if (imgFile.size > 5242880) throw new Error('Pictures must be 5 MB or smaller.');
+          const p = `images/${slug(title)}-${Date.now()}.${ext(imgFile.name, 'jpg')}`;
+          const { error } = await db.storage.from('guidance-media').upload(p, imgFile, { contentType: imgFile.type || 'image/jpeg', upsert: false });
+          if (error) throw new Error(error.message || 'Picture upload failed.');
+          image_url = mediaUrl(p);
+        }
+        if (vidFile) {
+          if (vidFile.size > 52428800) throw new Error('Videos must be 50 MB or smaller — for longer videos paste a YouTube link instead.');
+          const p = `videos/${slug(title)}-${Date.now()}.${ext(vidFile.name, 'mp4')}`;
+          const { error } = await db.storage.from('guidance-media').upload(p, vidFile, { contentType: vidFile.type || 'video/mp4', upsert: false });
+          if (error) throw new Error(error.message || 'Video upload failed.');
+          video_url = mediaUrl(p);
+        }
+        bar.classList.remove('busy'); bar.classList.add('hidden');
+      }
+      const row = {
+        title,
+        category: String(f.get('category') || 'tips'),
+        summary: String(f.get('summary') || '').trim(),
+        points: String(f.get('points') || '').split('\n').map(s => s.trim()).filter(Boolean),
+        image_url, video_url,
+        sort_order: Number(f.get('sort_order') || 0),
+        published: f.get('published') === 'on'
+      };
+      let error;
+      if (existing) ({ error } = await db.from('guides').update(row).eq('id', existing.id));
+      else { row.created_by = session.user.id; ({ error } = await db.from('guides').insert(row)); }
+      if (error) throw new Error(error.message || 'Could not save guidance.');
+      toast(existing ? 'Guidance updated.' : 'Guidance saved and published to the site.');
+      form.reset(); form.querySelector('[name="editing"]').value = ''; $('#guide-form-title').textContent = 'Add guidance';
+      await reloadAdmin();
+    } catch (err) { bar.classList.remove('busy'); bar.classList.add('hidden'); toast(err.message || 'Could not save guidance.'); }
+    finally { btn.disabled = false; }
+  }
+
+  // ---------- Response panel messaging ----------
+  async function sendThreadMessage(f) {
+    const thread_id = String(f.get('thread_id') || openThreadId || '');
+    const body = String(f.get('body') || '').trim();
+    if (!db || !session) { toast('Sign in first.'); return; }
+    if (!thread_id) { toast('Open or start a conversation first.'); return; }
+    if (!body) { toast('Write a message first.'); return; }
+    const { error } = await db.from('thread_messages').insert({ thread_id, sender_id: session.user.id, body });
+    if (error) { toast(error.message); return; }
+    toast('Message sent.');
+    if (isAdmin()) await reloadAdmin(); else await render('dashboard');
   }
 
   // ---------- Wiring ----------
@@ -735,6 +966,47 @@
     });
     $$('[data-delete-test]').forEach(b => b.addEventListener('click', async () => { if (!confirm('Delete this test link?')) return; const { error } = await db.from('practice_tests').delete().eq('id', b.dataset.deleteTest); if (error) { toast(error.message); return; } toast('Test deleted.'); await reloadAdmin(); }));
 
+    // Guidance centre
+    const guideForm = $('#guide-form');
+    $$('[data-edit-guide]').forEach(b => b.addEventListener('click', () => {
+      const g = (A.guides || []).find(x => x.id === b.dataset.editGuide); if (!g || !guideForm) return;
+      guideForm.querySelector('[name="editing"]').value = g.id;
+      guideForm.querySelector('[name="title"]').value = g.title || '';
+      guideForm.querySelector('[name="category"]').value = g.category || 'tips';
+      guideForm.querySelector('[name="summary"]').value = g.summary || '';
+      guideForm.querySelector('[name="points"]').value = (g.points || []).join('\n');
+      guideForm.querySelector('[name="sort_order"]').value = g.sort_order || 0;
+      guideForm.querySelector('[name="video_url"]').value = g.video_url || '';
+      guideForm.querySelector('[name="image_url"]').value = g.image_url || '';
+      guideForm.querySelector('[name="published"]').checked = !!g.published;
+      $('#guide-form-title').textContent = 'Edit guidance';
+      guideForm.scrollIntoView({ behavior: 'smooth' });
+    }));
+    $('#guide-reset')?.addEventListener('click', () => { guideForm.reset(); guideForm.querySelector('[name="editing"]').value = ''; $('#guide-form-title').textContent = 'Add guidance'; });
+    guideForm?.addEventListener('submit', e => {
+      e.preventDefault();
+      const editing = String(new FormData(guideForm).get('editing') || '');
+      saveGuide(editing ? (A.guides || []).find(x => x.id === editing) : null);
+    });
+    $$('[data-delete-guide]').forEach(b => b.addEventListener('click', async () => { if (!confirm('Delete this guidance item?')) return; const { error } = await db.from('guides').delete().eq('id', b.dataset.deleteGuide); if (error) { toast(error.message); return; } toast('Guidance deleted.'); await reloadAdmin(); }));
+
+    // Student reviews
+    $$('[data-review-status]').forEach(b => b.addEventListener('click', async () => { const { error } = await db.from('reviews').update({ status: b.dataset.status }).eq('id', b.dataset.reviewStatus); if (error) { toast(error.message); return; } toast(b.dataset.status === 'published' ? 'Review published on the site.' : 'Review rejected.'); await reloadAdmin(); }));
+    $$('[data-review-reply]').forEach(b => b.addEventListener('click', async () => {
+      const r = (A.reviews || []).find(x => x.id === b.dataset.reviewReply); if (!r) return;
+      const text = prompt('Academy response (shown publicly under the review):', r.admin_reply || '');
+      if (text === null) return;
+      const { error } = await db.from('reviews').update({ admin_reply: text.trim().slice(0, 1000) }).eq('id', r.id);
+      if (error) { toast(error.message); return; } toast('Response saved.'); await reloadAdmin();
+    }));
+    $$('[data-review-delete]').forEach(b => b.addEventListener('click', async () => { if (!confirm('Delete this review permanently?')) return; const { error } = await db.from('reviews').delete().eq('id', b.dataset.reviewDelete); if (error) { toast(error.message); return; } toast('Review deleted.'); await reloadAdmin(); }));
+
+    // Response panel
+    $$('[data-open-thread]').forEach(b => b.addEventListener('click', () => { A.openThread = b.dataset.openThread; reloadAdmin(); }));
+    $('#admin-thread-reply')?.addEventListener('submit', e => { e.preventDefault(); sendThreadMessage(new FormData(e.currentTarget)); });
+    $$('[data-thread-status]').forEach(b => b.addEventListener('click', async () => { const { error } = await db.from('threads').update({ status: b.dataset.status }).eq('id', b.dataset.threadStatus); if (error) { toast(error.message); return; } toast(b.dataset.status === 'closed' ? 'Conversation closed.' : 'Conversation reopened.'); await reloadAdmin(); }));
+    $$('[data-thread-delete]').forEach(b => b.addEventListener('click', async () => { if (!confirm('Delete this conversation and all of its messages?')) return; const id = b.dataset.threadDelete; const { error } = await db.from('threads').delete().eq('id', id); if (error) { toast(error.message); return; } if (A.openThread === id) A.openThread = null; toast('Conversation deleted.'); await reloadAdmin(); }));
+
     // Announcements
     const annForm = $('#announcement-form');
     $$('[data-edit-ann]').forEach(b => b.addEventListener('click', () => {
@@ -747,7 +1019,7 @@
       e.preventDefault(); const f = new FormData(annForm); const editing = String(f.get('editing') || '');
       const row = { title: String(f.get('title')).trim(), body: String(f.get('body')).trim(), published: f.get('published') === 'on' };
       let error; if (editing) { ({ error } = await db.from('announcements').update(row).eq('id', editing)); } else { row.created_by = session.user.id; ({ error } = await db.from('announcements').insert(row)); }
-      if (error) { toast(error.message); return; } toast('Announcement saved.'); await reloadAdmin();
+      if (error) { toast(error.message); return; } toast('Announcement saved.'); await reloadAdmin(); await loadAnnouncements(); updateTicker();
     });
     $$('[data-delete-ann]').forEach(b => b.addEventListener('click', async () => { if (!confirm('Delete this announcement?')) return; const { error } = await db.from('announcements').delete().eq('id', b.dataset.deleteAnn); if (error) { toast(error.message); return; } toast('Announcement deleted.'); await reloadAdmin(); }));
 
@@ -772,8 +1044,48 @@
     await loadSettings(); toast('Settings saved.'); await reloadAdmin();
   }
 
+  // ---------- Guidance / reviews / response panel wiring (student + public) ----------
+  function wireContent() {
+    $$('[data-guide-cat]').forEach(b => b.addEventListener('click', () => { guidesView.cat = b.dataset.guideCat; render('guidance'); }));
+    $$('[data-thread]').forEach(b => b.addEventListener('click', () => { openThreadId = b.dataset.thread; render('dashboard'); }));
+    $('#thread-reply')?.addEventListener('submit', e => { e.preventDefault(); sendThreadMessage(new FormData(e.currentTarget)); });
+    $('#thread-new')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = new FormData(e.currentTarget);
+      const subject = String(f.get('subject') || '').trim(), body = String(f.get('body') || '').trim();
+      if (!db || !session) { toast('Sign in first.'); return; }
+      if (!subject || !body) { toast('Add a subject and a message.'); return; }
+      const { data, error } = await db.from('threads').insert({ user_id: session.user.id, subject }).select('id').single();
+      if (error) { toast(error.message); return; }
+      const m = await db.from('thread_messages').insert({ thread_id: data.id, sender_id: session.user.id, body });
+      if (m.error) { toast(m.error.message); return; }
+      openThreadId = data.id;
+      toast('Message sent to the academy.');
+      await render('dashboard');
+    });
+    $('#review-form')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = new FormData(e.currentTarget);
+      const body = String(f.get('body') || '').trim();
+      if (!db || !session || !profile) { toast('Sign in first.'); return; }
+      if (!body) { toast('Write your experience first.'); return; }
+      const row = {
+        user_id: session.user.id,
+        name: profile.full_name || session.user.email,
+        rating: Math.max(1, Math.min(5, Number(f.get('rating')) || 5)),
+        body,
+        context: String(f.get('context') || '').trim().slice(0, 80) || 'Initial test',
+        status: 'pending'
+      };
+      const { error } = await db.from('reviews').insert(row);
+      if (error) { toast(error.message); return; }
+      toast('Thank you! Your review appears on the public page once the academy publishes it.');
+      await render('dashboard');
+    });
+  }
+
   function wirePage() {
-    wireAuth(); wireContact(); wireNotes(); wireAdmin(); wireDownloadButtons();
+    wireAuth(); wireContact(); wireNotes(); wireAdmin(); wireDownloadButtons(); wireContent();
     $$('[data-buy]').forEach(b => b.addEventListener('click', () => requestPackage(b.dataset.buy, b.dataset.name)));
     $('#logout-btn')?.addEventListener('click', async () => { if (db) await db.auth.signOut(); session = null; profile = null; toast('Signed out.'); location.hash = '#home'; });
     $('#retry-render')?.addEventListener('click', () => navigate());
@@ -828,6 +1140,7 @@
       // Load catalogs without letting a stall hang first paint.
       try { await withTimeout(Promise.allSettled([loadSettings(), loadPackages(), loadNotes(), loadPackageResources(), loadTests(), loadAnnouncements()]), 12000); }
       catch (e) { console.warn('Catalog load timed out.', e); }
+      updateTicker();
     }
     navigate();
   }
