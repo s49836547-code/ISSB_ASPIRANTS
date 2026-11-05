@@ -107,8 +107,20 @@
   async function loadReviews() { if (!db) return; const { data, error } = await db.from('reviews').select('id,name,rating,body,context,status,admin_reply,created_at').eq('status', 'published').order('created_at', { ascending: false }); if (!error) reviewsCache = data || []; }
 
   // ---------- Media helpers ----------
-  const GUIDE_CATS = { interview: 'Interview tips', tips: 'Preparation tips', information: 'Information', call: 'Interview call', other: 'Guidance' };
+  // Interview attire has two fixed galleries; everything else is general guidance.
+  const GUIDE_CATS = {
+    'formal-suit': 'Formal suit',
+    'shalwar-kameez': 'Shalwar kameez',
+    'video-guidance': 'Video guidance',
+    'interview-tips': 'Interview tips',
+    'information': 'Information',
+    'call': 'Interview call',
+    // legacy keys, so any older row still gets a readable label
+    interview: 'Interview tips', tips: 'Preparation tips', other: 'Guidance'
+  };
+  const ATTIRE_CATS = ['formal-suit', 'shalwar-kameez'];
   const guideCat = c => GUIDE_CATS[c] || c || 'Guidance';
+  const isAttireCat = c => ATTIRE_CATS.indexOf(c) >= 0;
   // Accepts a YouTube/Vimeo watch link, an embed link or a direct video file.
   function videoEmbed(url) {
     const u = String(url || '').trim();
@@ -124,7 +136,45 @@
     return '';
   }
   const stars = n => { const r = Math.max(0, Math.min(5, Number(n) || 0)); return `<span class="stars" aria-label="${r} out of 5">${'★'.repeat(r)}${'☆'.repeat(5 - r)}</span>`; };
-  const guideImage = g => (g.image_url || '').trim();
+  // A guide can hold a whole gallery of pictures; image_url is kept as the cover.
+  const guideImages = g => [...new Set([...(g.image_urls || []), g.image_url].map(s => String(s || '').trim()).filter(Boolean))];
+  // Starter attire guides ship with the site so students get correct guidance even
+  // before the academy has uploaded anything. Hidden once a real guide exists for
+  // the same category.
+  const BUILTIN_GUIDES = [
+    {
+      id: 'builtin-formal-suit', builtin: true, category: 'formal-suit', sort_order: 0,
+      title: 'Formal suit — what to wear to the ISSB interview',
+      summary: 'Charcoal-navy three-piece suit, plain white shirt, solid maroon tie and polished black oxfords. Quiet, fitted and formal beats expensive and flashy.',
+      points: [
+        'Suit: charcoal or navy three-piece, slim fit, no loose fabric and no shine',
+        'Shirt: plain white, spread collar, well ironed, cuffs showing 1 cm past the jacket',
+        'Tie: solid maroon, navy or burgundy silk — no cartoon patterns, no bright novelty colours',
+        'Waistcoat: same cloth as the suit, buttoned except the bottom button',
+        'Shoes: black leather oxfords, polished, with dark grey or navy socks',
+        'Belt: black leather with a small plain buckle, matching the shoes',
+        'Grooming: short hair, clean shave, trimmed nails, no strong perfume',
+        'Extras: a simple metal or leather-strap watch, and carry your CNIC plus call letter in a folder'
+      ],
+      image_urls: ['guidance/formal-suit-attire.png'], image_url: 'guidance/formal-suit-attire.png', video_url: ''
+    },
+    {
+      id: 'builtin-shalwar-kameez', builtin: true, category: 'shalwar-kameez', sort_order: 0,
+      title: 'Shalwar kameez with waistcoat — national dress for the interview',
+      summary: 'Plain off-white or cream shalwar kameez with a fitted navy waistcoat, black formal shoes and neat grooming. Traditional dress is fully acceptable at the ISSB interview.',
+      points: [
+        'Kameez: plain, well ironed, small neat collar, sleeves to the wrist, no embroidery',
+        'Colours that work: off-white, light cream, sky blue, light grey',
+        'Waistcoat: navy, charcoal or dark green — plain, fitted, buttoned up',
+        'Shalwar: matching colour, neatly stitched, not baggy, hem just above the shoe',
+        'Shoes: black leather formal shoes, polished, worn with plain dark socks',
+        'Avoid: bright colours, prints, heavy embroidery, jeans or sneakers',
+        'Grooming: short hair, clean shave, trimmed nails',
+        'Both options are equally acceptable — wear whichever you can carry confidently and comfortably'
+      ],
+      image_urls: ['guidance/shalwar-kameez-attire.png'], image_url: 'guidance/shalwar-kameez-attire.png', video_url: ''
+    }
+  ];
   const mediaUrl = path => (path && db) ? db.storage.from('guidance-media').getPublicUrl(path).data.publicUrl : '';
   const packagesForResource = (rid, legacyPid) => { const set = new Set(); if (legacyPid) set.add(legacyPid); prCache.forEach(pr => { if (pr.resource_id === rid) set.add(pr.package_id); }); return [...set]; };
 
@@ -213,29 +263,125 @@
     <div class="grid">${announcementsCache.length ? announcementsCache.map(a => `<article class="card"><span class="kicker">${fmtDate(a.created_at)}</span><h3>${esc(a.title)}</h3><p style="white-space:pre-wrap"><strong>${esc(a.body)}</strong></p></article>`).join('') : empty('No announcements yet', 'New updates will appear here when published.', '◷')}</div>`);
   }
 
-  // ---------- Guidance centre (admin-managed tips, pictures, videos) ----------
+  // ---------- Guidance centre: two attire galleries + video/tips guidance ----------
   const guidesView = { cat: '' };
+  let lbState = { list: [], idx: 0, img: 0 };
+
+  function allGuides() {
+    const real = guidesCache || [];
+    const usedCats = new Set(real.map(g => g.category));
+    return [...BUILTIN_GUIDES.filter(b => !usedCats.has(b.category)), ...real];
+  }
+  const visibleGuides = () => allGuides().filter(g => !guidesView.cat || g.category === guidesView.cat);
+
+  function galleryGrid(list) {
+    return `<div class="gallery-grid">${list.map(g => {
+      const imgs = guideImages(g);
+      return `<button type="button" class="gallery-item" data-guide-open="${esc(g.id)}">
+        ${imgs[0] ? `<img src="${esc(imgs[0])}" alt="${esc(g.title)}" loading="lazy" onerror="this.style.display='none'">` : '<span class="gallery-noimg">✦</span>'}
+        <span class="gallery-cap"><strong>${esc(g.title)}</strong><small>${imgs.length > 1 ? imgs.length + ' pictures · ' : ''}tap to open</small></span>
+      </button>`;
+    }).join('')}</div>`;
+  }
+
+  function guideCard(g) {
+    const pts = (g.points || []).filter(p => String(p || '').trim());
+    const imgs = guideImages(g);
+    const vid = videoEmbed(g.video_url);
+    return `<article class="card guide-card">${imgs[0] ? `<div class="guide-media"><img src="${esc(imgs[0])}" alt="${esc(g.title)}" loading="lazy" onerror="this.parentNode.style.display='none'"></div>` : ''}
+    <div class="resource-meta"><span class="tag">${esc(guideCat(g.category))}</span>${g.created_at ? `<span class="tag">${fmtDate(g.created_at)}</span>` : ''}</div>
+    <h3>${esc(g.title)}</h3>
+    ${g.summary ? `<p><strong>${esc(g.summary)}</strong></p>` : ''}
+    ${pts.length ? `<ul class="points">${pts.map(p => `<li><strong>${esc(p)}</strong></li>`).join('')}</ul>` : ''}
+    ${vid || (String(g.video_url || '').trim() ? `<p class="form-note"><a href="${esc(g.video_url)}" target="_blank" rel="noopener noreferrer">Watch the video ↗</a></p>` : '')}
+    ${imgs.length > 1 ? `<div class="form-actions" style="padding:0 20px"><button type="button" class="btn btn-outline" data-guide-open="${esc(g.id)}">Open gallery (${imgs.length}) →</button></div>` : ''}
+    </article>`;
+  }
+
+  function attireSection(c) {
+    const list = allGuides().filter(g => g.category === c);
+    const blurb = c === 'formal-suit'
+      ? 'Formal suit, shirt, tie, waistcoat and shoes — the colours and fit that hold up in front of the board.'
+      : 'Plain shalwar kameez with a fitted waistcoat — the national-dress option, equally acceptable at the interview.';
+    return `<section style="padding:0 0 34px"><div class="section-head"><span class="kicker">Interview attire</span><h2>${esc(guideCat(c))} gallery</h2><p>${blurb}</p></div>
+    ${list.length ? galleryGrid(list) : empty('Nothing in this gallery yet', 'The academy has not uploaded pictures to this gallery yet.', '🖼')}</section>`;
+  }
+
   async function renderGuidance() {
     await loadGuides();
-    const all = guidesCache || [];
-    const cats = [...new Set(all.map(g => g.category).filter(Boolean))];
-    const list = guidesView.cat ? all.filter(g => g.category === guidesView.cat) : all;
-    const chips = all.length > 1 ? `<div class="filter-bar">${['', ...cats].map(c => `<button class="btn ${guidesView.cat === c ? 'btn-primary' : 'btn-outline'}" data-guide-cat="${esc(c)}">${c ? esc(guideCat(c)) : 'All guidance'}</button>`).join('')}</div>` : '';
-    const cards = list.map(g => {
-      const pts = (g.points || []).filter(p => String(p || '').trim());
-      const img = guideImage(g);
-      const vid = videoEmbed(g.video_url);
-      return `<article class="card guide-card">${img ? `<div class="guide-media"><img src="${esc(img)}" alt="${esc(g.title)}" loading="lazy" onerror="this.parentNode.style.display='none'"></div>` : ''}
-      <div class="resource-meta"><span class="tag">${esc(guideCat(g.category))}</span><span class="tag">${fmtDate(g.created_at)}</span></div>
-      <h3>${esc(g.title)}</h3>
-      ${g.summary ? `<p><strong>${esc(g.summary)}</strong></p>` : ''}
-      ${pts.length ? `<ul class="points">${pts.map(p => `<li><strong>${esc(p)}</strong></li>`).join('')}</ul>` : ''}
-      ${vid || (String(g.video_url || '').trim() ? `<p class="form-note"><a href="${esc(g.video_url)}" target="_blank" rel="noopener noreferrer">Watch the video ↗</a></p>` : '')}
-      </article>`;
-    }).join('');
-    return wrap(`${pageHead('Guidance centre', 'Interview tips, guidance & calls', 'Practical guidance published by the academy — pictures, points and videos, so preparation is not guesswork.')}
-    ${chips}
-    <div class="grid grid-3">${cards || empty('No guidance published yet', 'Interview tips, information and video guidance will appear here as soon as the academy publishes them.', '✦')}</div>`);
+    const all = allGuides();
+    const present = [...new Set(all.map(g => g.category).filter(Boolean))];
+    const tabs = ['', ...ATTIRE_CATS.filter(c => present.indexOf(c) >= 0), ...present.filter(c => !isAttireCat(c))];
+    const chips = `<div class="filter-bar">${tabs.map(c => `<button class="btn ${guidesView.cat === c ? 'btn-primary' : 'btn-outline'}" data-guide-cat="${esc(c)}">${c ? esc(guideCat(c)) + (isAttireCat(c) ? ' gallery' : '') : 'All guidance'}</button>`).join('')}</div>`;
+
+    let body;
+    if (guidesView.cat && isAttireCat(guidesView.cat)) {
+      const list = all.filter(g => g.category === guidesView.cat);
+      body = list.length ? galleryGrid(list) : empty('Nothing in this gallery yet', 'The academy has not uploaded pictures to this gallery yet.', '🖼');
+    } else if (guidesView.cat) {
+      const list = all.filter(g => g.category === guidesView.cat);
+      body = `<div class="grid grid-3">${list.map(guideCard).join('') || empty('Nothing published here yet', 'Video guidance, tips and calls will appear here as soon as the academy publishes them.', '▶')}</div>`;
+    } else {
+      const rest = all.filter(g => !isAttireCat(g.category));
+      body = `${attireSection('formal-suit')}${attireSection('shalwar-kameez')}
+      <section style="padding:0"><div class="section-head"><span class="kicker">Preparation help</span><h2>Video guidance, tips &amp; calls</h2><p>Video guidance on preparation, interview tips, useful information and interview call announcements — all published from the admin portal.</p></div>
+      <div class="grid grid-3">${rest.map(guideCard).join('') || empty('Nothing published here yet', 'Video guidance, interview tips and calls will appear here as soon as the academy publishes them.', '▶')}</div></section>`;
+    }
+    return wrap(`${pageHead('Guidance centre', 'Interview attire galleries & video guidance', 'Two separate galleries — formal suit and shalwar kameez — plus video guidance, interview tips and interview calls. Every entry is published by the academy from the admin portal.')}
+    ${chips}${body}`);
+  }
+
+  // Lightbox viewer for a gallery entry (lives outside #app so re-renders do not kill it).
+  function closeLightbox() { const el = $('#guide-lightbox'); if (el) el.remove(); document.removeEventListener('keydown', lightboxKeys); }
+  function lightboxKeys(e) {
+    if (e.key === 'Escape') closeLightbox();
+    else if (e.key === 'ArrowRight') stepLightbox(1);
+    else if (e.key === 'ArrowLeft') stepLightbox(-1);
+  }
+  function stepLightbox(d) {
+    const n = lbState.list.length;
+    if (!n) return;
+    lbState.idx = (lbState.idx + d + n) % n;
+    lbState.img = 0;
+    drawLightbox();
+  }
+  function drawLightbox() {
+    const host = $('#guide-lightbox');
+    if (!host) return;
+    const g = lbState.list[lbState.idx];
+    if (!g) { closeLightbox(); return; }
+    const imgs = guideImages(g);
+    const pts = (g.points || []).filter(p => String(p || '').trim());
+    host.innerHTML = `<div class="lb-card" role="dialog" aria-modal="true" aria-label="${esc(g.title)}">
+      <button type="button" class="lb-close" data-lb-close aria-label="Close">&times;</button>
+      <div class="lb-stage">${imgs.length ? `<img src="${esc(imgs[Math.min(lbState.img, imgs.length - 1)])}" alt="${esc(g.title)}">` : '<span class="gallery-noimg">✦</span>'}</div>
+      ${imgs.length > 1 ? `<div class="lb-strip">${imgs.map((u, i) => `<button type="button" class="${i === lbState.img ? 'on' : ''}" data-lb-img="${i}"><img src="${esc(u)}" alt="Picture ${i + 1}" loading="lazy"></button>`).join('')}</div>` : ''}
+      <div class="lb-body">
+        <span class="tag">${esc(guideCat(g.category))}</span>
+        <h3>${esc(g.title)}</h3>
+        ${g.summary ? `<p><strong>${esc(g.summary)}</strong></p>` : ''}
+        ${pts.length ? `<ul class="points">${pts.map(p => `<li><strong>${esc(p)}</strong></li>`).join('')}</ul>` : ''}
+        ${videoEmbed(g.video_url) || ''}
+        ${lbState.list.length > 1 ? `<div class="form-actions"><button type="button" class="btn btn-outline" data-lb-prev>← Previous</button><span class="muted">${lbState.idx + 1} of ${lbState.list.length}</span><button type="button" class="btn btn-outline" data-lb-next>Next →</button></div>` : ''}
+      </div></div>`;
+    $('[data-lb-close]', host).onclick = closeLightbox;
+    $$('[data-lb-img]', host).forEach(b => b.onclick = () => { lbState.img = Number(b.dataset.lbImg); drawLightbox(); });
+    const prev = $('[data-lb-prev]', host), next = $('[data-lb-next]', host);
+    if (prev) prev.onclick = () => stepLightbox(-1);
+    if (next) next.onclick = () => stepLightbox(1);
+  }
+  function openLightbox(id) {
+    const list = visibleGuides();
+    const i = list.findIndex(g => String(g.id) === String(id));
+    lbState = { list, idx: i < 0 ? 0 : i, img: 0 };
+    closeLightbox();
+    const host = document.createElement('div');
+    host.id = 'guide-lightbox';
+    host.className = 'lightbox';
+    host.addEventListener('click', e => { if (e.target === host) closeLightbox(); });
+    document.body.appendChild(host);
+    document.addEventListener('keydown', lightboxKeys);
+    drawLightbox();
   }
 
   // ---------- Student reviews ----------
@@ -493,21 +639,47 @@
       <div class="form-actions"><button class="btn btn-primary" type="submit">Save test link</button><button class="btn btn-outline" type="button" id="test-reset">Clear</button></div></form></section>`;
   }
 
+  // Pictures staged for the guide form: existing ones plus newly uploaded ones.
+  let guideDraftImages = [];
+  function guideStripHtml() {
+    if (!guideDraftImages.length) return '<p class="muted" style="margin:0">No pictures in this entry yet.</p>';
+    return `<div class="thumb-strip">${guideDraftImages.map((u, i) => `<span class="thumb"><img src="${esc(u)}" alt="Picture ${i + 1}" loading="lazy"><button type="button" class="thumb-x" data-remove-image="${i}" aria-label="Remove picture">&times;</button></span>`).join('')}</div>`;
+  }
+  function bindStripRemovals() {
+    $$('#guide-existing [data-remove-image]').forEach(b => b.addEventListener('click', () => {
+      guideDraftImages.splice(Number(b.getAttribute('data-remove-image')), 1);
+      refreshGuideStrip();
+    }));
+  }
+  function refreshGuideStrip() { const host = $('#guide-existing'); if (host) { host.innerHTML = guideStripHtml(); bindStripRemovals(); } }
+  const catOptions = sel => `<optgroup label="Interview attire — own gallery">
+      <option value="formal-suit"${sel === 'formal-suit' ? ' selected' : ''}>Formal suit gallery</option>
+      <option value="shalwar-kameez"${sel === 'shalwar-kameez' ? ' selected' : ''}>Shalwar kameez gallery</option>
+    </optgroup>
+    <optgroup label="Guidance &amp; video">
+      <option value="video-guidance"${sel === 'video-guidance' ? ' selected' : ''}>Video guidance</option>
+      <option value="interview-tips"${sel === 'interview-tips' || sel === 'interview' ? ' selected' : ''}>Interview tips</option>
+      <option value="information"${sel === 'information' ? ' selected' : ''}>Information</option>
+      <option value="call"${sel === 'call' ? ' selected' : ''}>Interview call</option>
+      <option value="other"${sel === 'other' || sel === 'tips' ? ' selected' : ''}>Other guidance</option>
+    </optgroup>`;
+
   function adminGuidance() {
     const list = A.guides || [];
-    return `<section class="admin-panel"><h2>Guidance centre</h2><p class="muted">Publish interview tips, information or interview calls with pictures, bold bullet points and videos. Students see them on the public Guidance page the moment you publish.</p>
-    <div class="table-wrap"><table class="data-table"><thead><tr><th>Title</th><th>Category</th><th>Media</th><th>Points</th><th>Published</th><th>Order</th><th>Actions</th></tr></thead><tbody>${list.map(g => `<tr><td>${esc(g.title)}</td><td>${esc(guideCat(g.category))}</td><td class="muted">${g.image_url ? '🖼 picture' : '—'}${g.video_url ? ' · ▶ video' : ''}</td><td>${(g.points || []).filter(p => String(p || '').trim()).length}</td><td><span class="status ${g.published ? 'approved' : ''}">${g.published ? 'yes' : 'no'}</span></td><td>${g.sort_order || 0}</td><td><div class="row-actions"><button class="btn btn-outline" data-edit-guide="${esc(g.id)}">Edit</button><button class="btn btn-danger" data-delete-guide="${esc(g.id)}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="7">No guidance added yet.</td></tr>'}</tbody></table></div>
+    return `<section class="admin-panel"><h2>Guidance centre</h2><p class="muted">Two separate attire galleries — <strong>Formal suit</strong> and <strong>Shalwar kameez</strong> — plus video guidance, interview tips, information and interview calls. Choose the category first, then upload the pictures that belong to that gallery. Each gallery is shown separately to students on the public Guidance page.</p>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Title</th><th>Category / gallery</th><th>Media</th><th>Points</th><th>Published</th><th>Order</th><th>Actions</th></tr></thead><tbody>${list.map(g => { const n = guideImages(g).length; return `<tr><td>${esc(g.title)}</td><td><span class="tag">${esc(guideCat(g.category))}</span>${isAttireCat(g.category) ? ' <span class="tag free">gallery</span>' : ''}</td><td class="muted">${n ? `🖼 ${n} picture${n > 1 ? 's' : ''}` : '— no picture'}${g.video_url ? ' · ▶ video' : ''}</td><td>${(g.points || []).filter(p => String(p || '').trim()).length}</td><td><span class="status ${g.published ? 'approved' : ''}">${g.published ? 'yes' : 'no'}</span></td><td>${g.sort_order || 0}</td><td><div class="row-actions"><button class="btn btn-outline" data-edit-guide="${esc(g.id)}">Edit</button><button class="btn btn-danger" data-delete-guide="${esc(g.id)}">Delete</button></div></td></tr>`; }).join('') || '<tr><td colspan="7">No guidance added yet.</td></tr>'}</tbody></table></div>
     <form id="guide-form" class="card" style="margin-top:20px"><h3 id="guide-form-title">Add guidance</h3><input type="hidden" name="editing" value="">
       <div class="form-grid">
-        <div class="field"><label>Title</label><input name="title" required maxlength="160" placeholder="e.g. ISSB interview day — what to wear"></div>
-        <div class="field"><label>Category</label><select name="category"><option value="interview">Interview tips</option><option value="tips">Preparation tips</option><option value="information">Information</option><option value="call">Interview call</option><option value="other">Other guidance</option></select></div>
+        <div class="field"><label>Category / gallery — choose this first</label><select name="category">${catOptions('formal-suit')}</select></div>
+        <div class="field"><label>Title</label><input name="title" required maxlength="160" placeholder="e.g. Formal suit — colours that work"></div>
         <div class="field full"><label>Short summary</label><textarea name="summary" maxlength="600"></textarea></div>
         <div class="field full"><label>Points (one per line — shown in bold to students)</label><textarea name="points" maxlength="4000" placeholder="Reach the board 30 minutes early&#10;Carry your original CNIC and call letter&#10;Answer honestly, do not memorise"></textarea></div>
-        <div class="field"><label>Display order</label><input name="sort_order" type="number" value="0"></div>
+        <div class="field full"><label>Gallery pictures — select several at once (max 5 MB each)</label><input name="images" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple></div>
+        <div class="field full"><label>Pictures already in this entry</label><div id="guide-existing">${guideStripHtml()}</div></div>
+        <div class="field full"><label>…or paste a picture URL to add to this gallery</label><input name="image_url" type="url" placeholder="https://…"></div>
         <div class="field full"><label>Video link (YouTube, Vimeo or direct .mp4)</label><input name="video_url" type="url" placeholder="https://www.youtube.com/watch?v=…"></div>
         <div class="field full"><label>Video file (optional, max 50 MB — a YouTube link is safer for long videos)</label><input name="video" type="file" accept="video/mp4,video/webm"></div>
-        <div class="field full"><label>Picture — upload a file</label><input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></div>
-        <div class="field full"><label>…or paste a picture URL (an uploaded file wins if you give both)</label><input name="image_url" type="url" placeholder="https://…"></div>
+        <div class="field"><label>Display order</label><input name="sort_order" type="number" value="0"></div>
       </div>
       <label class="checkline"><input type="checkbox" name="published" checked> Publish immediately</label>
       <div class="progress hidden" id="guide-progress"><span></span></div>
@@ -753,54 +925,71 @@
   }
 
   // ---------- Guidance media upload + save ----------
+  // The bucket/tables only exist after supabase-content-update.sql has been run,
+  // so turn Supabase's raw storage errors into something the owner can act on.
+  function friendlyUploadError(error) {
+    const m = String((error && error.message) || '');
+    if (/bucket not found/i.test(m)) return 'The "guidance-media" storage bucket does not exist yet. Open Supabase → SQL Editor and run supabase-content-update.sql (section 6 creates the bucket), then upload again.';
+    if (/permission denied|row-level security|new row violates/i.test(m)) return 'Upload refused by the database. Make sure supabase-content-update.sql has been run and that you are signed in as owner/admin.';
+    if (/maximum size|too large|entity too large/i.test(m)) return 'That file is larger than the bucket allows (50 MB). Use a YouTube link for long videos.';
+    return m || 'Upload failed.';
+  }
+
   async function saveGuide(existing) {
     const form = $('#guide-form');
     const f = new FormData(form);
     const title = String(f.get('title') || '').trim();
     if (!title) { toast('Enter a title.'); return; }
+    const category = String(f.get('category') || 'other');
     const btn = $('#guide-save'), bar = $('#guide-progress');
-    const imgFile = (form.querySelector('input[name="image"]').files || [])[0];
+    const imgFiles = [...(form.querySelector('input[name="images"]').files || [])];
     const vidFile = (form.querySelector('input[name="video"]').files || [])[0];
-    let image_url = String(f.get('image_url') || '').trim();
+    const pastedImage = String(f.get('image_url') || '').trim();
     let video_url = String(f.get('video_url') || '').trim();
-    if (image_url && !/^https:\/\//i.test(image_url)) { toast('The picture URL must start with https://'); return; }
+    if (pastedImage && !/^https:\/\//i.test(pastedImage)) { toast('The picture URL must start with https://'); return; }
     if (video_url && !/^https:\/\//i.test(video_url)) { toast('The video URL must start with https://'); return; }
     btn.disabled = true;
     try {
-      if (imgFile || vidFile) {
-        bar.classList.remove('hidden'); bar.classList.add('busy');
-        const ext = (name, fb) => String(name || '').split('.').pop().toLowerCase() || fb;
-        if (imgFile) {
-          if (imgFile.size > 5242880) throw new Error('Pictures must be 5 MB or smaller.');
-          const p = `images/${slug(title)}-${Date.now()}.${ext(imgFile.name, 'jpg')}`;
-          const { error } = await db.storage.from('guidance-media').upload(p, imgFile, { contentType: imgFile.type || 'image/jpeg', upsert: false });
-          if (error) throw new Error(error.message || 'Picture upload failed.');
-          image_url = mediaUrl(p);
-        }
-        if (vidFile) {
-          if (vidFile.size > 52428800) throw new Error('Videos must be 50 MB or smaller — for longer videos paste a YouTube link instead.');
-          const p = `videos/${slug(title)}-${Date.now()}.${ext(vidFile.name, 'mp4')}`;
-          const { error } = await db.storage.from('guidance-media').upload(p, vidFile, { contentType: vidFile.type || 'video/mp4', upsert: false });
-          if (error) throw new Error(error.message || 'Video upload failed.');
-          video_url = mediaUrl(p);
-        }
-        bar.classList.remove('busy'); bar.classList.add('hidden');
+      const images = guideDraftImages.slice();
+      if (imgFiles.length || vidFile) { bar.classList.remove('hidden'); bar.classList.add('busy'); }
+      const ext = (name, fb) => String(name || '').split('.').pop().toLowerCase() || fb;
+      for (let i = 0; i < imgFiles.length; i++) {
+        const file = imgFiles[i];
+        if (file.size > 5242880) throw new Error(`"${file.name}" is bigger than 5 MB — compress it first.`);
+        // Pictures are filed under their gallery so each category stays separate in storage too.
+        const p = `images/${category}/${slug(title)}-${Date.now()}-${i}.${ext(file.name, 'jpg')}`;
+        const { error } = await db.storage.from('guidance-media').upload(p, file, { contentType: file.type || 'image/jpeg', upsert: false });
+        if (error) throw new Error(friendlyUploadError(error));
+        images.push(mediaUrl(p));
       }
+      if (pastedImage && images.indexOf(pastedImage) < 0) images.push(pastedImage);
+      if (vidFile) {
+        if (vidFile.size > 52428800) throw new Error('Videos must be 50 MB or smaller — for longer videos paste a YouTube link instead.');
+        const p = `videos/${category}/${slug(title)}-${Date.now()}.${ext(vidFile.name, 'mp4')}`;
+        const { error } = await db.storage.from('guidance-media').upload(p, vidFile, { contentType: vidFile.type || 'video/mp4', upsert: false });
+        if (error) throw new Error(friendlyUploadError(error));
+        video_url = mediaUrl(p);
+      }
+      bar.classList.remove('busy'); bar.classList.add('hidden');
       const row = {
         title,
-        category: String(f.get('category') || 'tips'),
+        category,
         summary: String(f.get('summary') || '').trim(),
         points: String(f.get('points') || '').split('\n').map(s => s.trim()).filter(Boolean),
-        image_url, video_url,
+        image_urls: images,
+        image_url: images[0] || '',
+        video_url,
         sort_order: Number(f.get('sort_order') || 0),
         published: f.get('published') === 'on'
       };
       let error;
       if (existing) ({ error } = await db.from('guides').update(row).eq('id', existing.id));
       else { row.created_by = session.user.id; ({ error } = await db.from('guides').insert(row)); }
-      if (error) throw new Error(error.message || 'Could not save guidance.');
-      toast(existing ? 'Guidance updated.' : 'Guidance saved and published to the site.');
+      if (error) throw new Error(friendlyUploadError(error));
+      toast(existing ? 'Guidance updated.' : `Saved to the ${guideCat(category)}${isAttireCat(category) ? ' gallery' : ' section'}.`);
+      guideDraftImages = [];
       form.reset(); form.querySelector('[name="editing"]').value = ''; $('#guide-form-title').textContent = 'Add guidance';
+      refreshGuideStrip();
       await reloadAdmin();
     } catch (err) { bar.classList.remove('busy'); bar.classList.add('hidden'); toast(err.message || 'Could not save guidance.'); }
     finally { btn.disabled = false; }
@@ -968,21 +1157,30 @@
 
     // Guidance centre
     const guideForm = $('#guide-form');
+    bindStripRemovals();
     $$('[data-edit-guide]').forEach(b => b.addEventListener('click', () => {
       const g = (A.guides || []).find(x => x.id === b.dataset.editGuide); if (!g || !guideForm) return;
       guideForm.querySelector('[name="editing"]').value = g.id;
       guideForm.querySelector('[name="title"]').value = g.title || '';
-      guideForm.querySelector('[name="category"]').value = g.category || 'tips';
+      guideForm.querySelector('[name="category"]').value = g.category || 'formal-suit';
       guideForm.querySelector('[name="summary"]').value = g.summary || '';
       guideForm.querySelector('[name="points"]').value = (g.points || []).join('\n');
       guideForm.querySelector('[name="sort_order"]').value = g.sort_order || 0;
       guideForm.querySelector('[name="video_url"]').value = g.video_url || '';
-      guideForm.querySelector('[name="image_url"]').value = g.image_url || '';
+      // Existing pictures move into the strip, so the URL field stays empty and
+      // saving cannot add the same picture twice.
+      guideForm.querySelector('[name="image_url"]').value = '';
       guideForm.querySelector('[name="published"]').checked = !!g.published;
-      $('#guide-form-title').textContent = 'Edit guidance';
+      guideDraftImages = guideImages(g);
+      refreshGuideStrip();
+      $('#guide-form-title').textContent = `Edit guidance — ${guideCat(g.category)}`;
       guideForm.scrollIntoView({ behavior: 'smooth' });
     }));
-    $('#guide-reset')?.addEventListener('click', () => { guideForm.reset(); guideForm.querySelector('[name="editing"]').value = ''; $('#guide-form-title').textContent = 'Add guidance'; });
+    $('#guide-reset')?.addEventListener('click', () => {
+      guideForm.reset(); guideForm.querySelector('[name="editing"]').value = '';
+      guideDraftImages = []; refreshGuideStrip();
+      $('#guide-form-title').textContent = 'Add guidance';
+    });
     guideForm?.addEventListener('submit', e => {
       e.preventDefault();
       const editing = String(new FormData(guideForm).get('editing') || '');
@@ -1047,6 +1245,7 @@
   // ---------- Guidance / reviews / response panel wiring (student + public) ----------
   function wireContent() {
     $$('[data-guide-cat]').forEach(b => b.addEventListener('click', () => { guidesView.cat = b.dataset.guideCat; render('guidance'); }));
+    $$('[data-guide-open]').forEach(b => b.addEventListener('click', () => openLightbox(b.dataset.guideOpen)));
     $$('[data-thread]').forEach(b => b.addEventListener('click', () => { openThreadId = b.dataset.thread; render('dashboard'); }));
     $('#thread-reply')?.addEventListener('submit', e => { e.preventDefault(); sendThreadMessage(new FormData(e.currentTarget)); });
     $('#thread-new')?.addEventListener('submit', async e => {

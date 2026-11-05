@@ -2,14 +2,21 @@
 -- CONTENT UPDATE  (run once, Supabase Dashboard -> SQL Editor)
 -- ============================================================
 -- Adds the tables behind four new site features:
---   1. guides          -> Guidance centre (interview tips, information, calls)
---                         with pictures, videos and bullet points, all managed
---                         from the admin portal.
+--   1. guides          -> Guidance centre. Two separate interview-attire galleries
+--                         ('formal-suit' and 'shalwar-kameez'), each with its own
+--                         pictures, plus 'video-guidance', 'interview-tips',
+--                         'information' and 'call' entries. All managed from the
+--                         admin portal.
 --   2. reviews         -> Student experience/review section with academy reply.
 --   3. threads +
 --      thread_messages -> Response panel: two-way conversation between a student
 --                         and the admin/owner.
 --   4. guidance-media  -> PUBLIC storage bucket for guide pictures and videos.
+--
+-- IF IT FAILS: look at the error line number. Sections 1-5 are ordinary tables
+-- and can be re-run safely. If only the upload gives "Bucket not found", re-run
+-- SECTION 6 ON ITS OWN in a fresh SQL Editor query — the SQL Editor aborts the
+-- whole script at the first error, so a failure above silently skips the bucket.
 --
 -- Announcements already existed (public.announcements); the site now shows them
 -- in a ticker on every page, which needs no schema change.
@@ -30,10 +37,11 @@
 create table if not exists public.guides (
   id uuid primary key default gen_random_uuid(),
   title text not null,
-  category text not null default 'tips',
+  category text not null default 'other',
   summary text not null default '',
   points text[] not null default '{}',
   image_url text not null default '',
+  image_urls text[] not null default '{}',
   video_url text not null default '',
   published boolean not null default false,
   sort_order integer not null default 0,
@@ -41,7 +49,10 @@ create table if not exists public.guides (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- For databases where guides already exists from an earlier run.
+alter table public.guides add column if not exists image_urls text[] not null default '{}';
 create index if not exists guides_published_idx on public.guides(published, sort_order);
+create index if not exists guides_category_idx on public.guides(category, sort_order);
 
 alter table public.guides enable row level security;
 drop policy if exists "guides public read" on public.guides;
@@ -171,6 +182,12 @@ for each row execute procedure public.touch_thread_last_message();
 -- ------------------------------------------------------------
 -- 4) updated_at trigger for guides
 -- ------------------------------------------------------------
+-- Defined here too, so this file does not depend on supabase-schema-v2.sql
+-- having been run first.
+create or replace function public.touch_updated_at()
+returns trigger language plpgsql as $$
+begin new.updated_at = now(); return new; end; $$;
+
 drop trigger if exists trg_guides_touch on public.guides;
 create trigger trg_guides_touch before update on public.guides
 for each row execute procedure public.touch_updated_at();
