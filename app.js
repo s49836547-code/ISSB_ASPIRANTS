@@ -121,18 +121,20 @@
   const ATTIRE_CATS = ['formal-suit', 'shalwar-kameez'];
   const guideCat = c => GUIDE_CATS[c] || c || 'Guidance';
   const isAttireCat = c => ATTIRE_CATS.indexOf(c) >= 0;
-  // Accepts a YouTube/Vimeo watch link, an embed link or a direct video file.
+  // Accepts a YouTube/Vimeo watch link, an embed link, a direct video file,
+  // or a same-origin relative path to a video shipped with the site.
   function videoEmbed(url) {
     const u = String(url || '').trim();
     if (!u) return '';
-    if (!/^https:\/\//i.test(u)) return '';
+    const relative = /^(?:\.?\/)?[\w-]+(?:\/[\w.-]+)*\.(?:mp4|webm|ogg|mov)$/i.test(u);
+    if (!relative && !/^https:\/\//i.test(u)) return '';
     let id = '';
     const y = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/);
     if (y) id = y[1];
     if (id) return `<div class="video-wrap"><iframe src="https://www.youtube-nocookie.com/embed/${esc(id)}" title="Guidance video" loading="lazy" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`;
     const v = u.match(/vimeo\.com\/(\d+)/);
     if (v) return `<div class="video-wrap"><iframe src="https://player.vimeo.com/video/${esc(v[1])}" title="Guidance video" loading="lazy" allow="fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`;
-    if (/\.(mp4|webm|ogg|mov)$/i.test(u)) return `<div class="video-wrap"><video controls preload="metadata" playsinline src="${esc(u)}"></video></div>`;
+    if (/\.(mp4|webm|ogg|mov)$/i.test(u)) return `<div class="video-wrap"><video controls preload="metadata" playsinline onloadedmetadata="if(this.videoHeight>this.videoWidth)this.parentNode.classList.add('portrait')" src="${esc(u)}"></video></div>`;
     return '';
   }
   const stars = n => { const r = Math.max(0, Math.min(5, Number(n) || 0)); return `<span class="stars" aria-label="${r} out of 5">${'★'.repeat(r)}${'☆'.repeat(5 - r)}</span>`; };
@@ -173,6 +175,19 @@
         'Both options are equally acceptable — wear whichever you can carry confidently and comfortably'
       ],
       image_urls: ['guidance/shalwar-kameez-attire.png'], image_url: 'guidance/shalwar-kameez-attire.png', video_url: ''
+    },
+    {
+      id: 'builtin-selection-explainer', builtin: true, category: 'video-guidance', sort_order: -1,
+      title: 'ISSB selection explained — initial test to recommendation',
+      summary: 'A 40-second walkthrough of the whole journey: initial test, physical, medical, the five ISSB days, interview dress and the board result.',
+      points: [
+        'Stage 1 initial test: verbal, non-verbal and academic — the biggest filter',
+        'Stage 2 physical: 1.6 km run, push-ups, sit-ups, chin-ups and the ditch jump',
+        'Stage 3 medical: height, weight, eyesight and general fitness',
+        'ISSB days 1-5: check-in, psychologist tests, GTO tasks, interview and board conference',
+        'Interview dress: formal suit or plain shalwar kameez — both are acceptable'
+      ],
+      image_urls: [], image_url: '', video_url: 'guidance/issb-selection-explainer.mp4'
     }
   ];
   const mediaUrl = path => (path && db) ? db.storage.from('guidance-media').getPublicUrl(path).data.publicUrl : '';
@@ -270,7 +285,9 @@
   function allGuides() {
     const real = guidesCache || [];
     const usedCats = new Set(real.map(g => g.category));
-    return [...BUILTIN_GUIDES.filter(b => !usedCats.has(b.category)), ...real];
+    // Only the attire galleries get superseded by an owner upload; the explainer
+    // video should stay visible alongside any guidance the owner adds.
+    return [...BUILTIN_GUIDES.filter(b => !isAttireCat(b.category) || !usedCats.has(b.category)), ...real];
   }
   const visibleGuides = () => allGuides().filter(g => !guidesView.cat || g.category === guidesView.cat);
 
