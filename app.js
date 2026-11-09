@@ -188,6 +188,20 @@
         'Interview dress: formal suit or plain shalwar kameez — both are acceptable'
       ],
       image_urls: [], image_url: '', video_url: 'guidance/issb-selection-explainer.mp4'
+    },
+    {
+      id: 'builtin-interview-answers', builtin: true, category: 'interview-tips', sort_order: -1,
+      title: 'How to answer ISSB interview questions — in your own voice',
+      summary: 'Full interview guidance: build every answer from your own life, use the listen-pause-answer method, handle the usual questions, and stay natural instead of copying someone else\'s style.',
+      points: [
+        'Every answer grows from your real story: family, studies, hobbies, strengths and weaknesses',
+        'Never copy a style — cross-questions collapse a borrowed answer on the second question',
+        'Listen to the full question, pause a second, then two or three honest sentences with one real example',
+        "If you don't know, say so plainly and offer what you do know — honesty reads as confidence",
+        'Sit tall, gentle eye contact, calm voice: nervous is fine, fake is not',
+        'Practice out loud without a script, then re-say each answer in different words to build ownership'
+      ],
+      image_urls: [], image_url: '', video_url: 'guidance/issb-interview-answers.mp4'
     }
   ];
   const mediaUrl = path => (path && db) ? db.storage.from('guidance-media').getPublicUrl(path).data.publicUrl : '';
