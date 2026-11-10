@@ -25,6 +25,7 @@
   let guidesCache = [], reviewsCache = [], experiencesCache = [];
   let adminTab = 'overview';
   const notesView = { q: '', category: '', subject: '', access: '', page: 1 };
+  const testsView = { cat: '' };
   const PAGE_SIZE = 9;
   const A = {}; // admin data cache, refreshed per admin render
   const STATUS_LABEL = { pending: 'Pending approval', approved: 'Approved', rejected: 'Rejected', suspended: 'Suspended' };
@@ -285,8 +286,13 @@
   async function renderTests() {
     // Fetch fresh so a newly published test shows without a full page reload.
     if (db) { const { data, error } = await db.from('practice_tests').select('*').eq('published', true).order('created_at', { ascending: false }); if (!error) testsCache = data || []; }
+    const cats = [...new Set(testsCache.map(t => t.category).filter(Boolean))].sort();
+    if (testsView.cat && !cats.includes(testsView.cat)) testsView.cat = '';
+    const list = testsView.cat ? testsCache.filter(t => t.category === testsView.cat) : testsCache;
+    const chips = cats.length ? `<div class="filter-bar"><button class="btn ${testsView.cat ? 'btn-outline' : 'btn-primary'}" data-test-cat="">All tests</button>${cats.map(c => `<button class="btn ${testsView.cat === c ? 'btn-primary' : 'btn-outline'}" data-test-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : '';
     return wrap(`${pageHead('Practice', 'Practice tests', 'External practice links are published by the academy team. Check the destination before entering personal information.')}
-    <div class="grid grid-3">${testsCache.length ? testsCache.map(t => `<article class="card resource-card"><span class="tag">${esc(t.category || 'General')}</span><h3>${esc(t.title)}</h3><p>${esc(t.description || 'Practice resource')}</p><a class="btn btn-primary" href="${esc(t.url)}" target="_blank" rel="noopener noreferrer">Open test ↗</a><p class="form-note" style="margin-top:8px;word-break:break-all">${esc(t.url)}</p></article>`).join('') : empty('Practice tests coming soon', 'No test links have been published yet. Please check again later.', '◈')}</div>`);
+    ${chips}
+    <div class="grid grid-3">${list.length ? list.map(t => `<article class="card resource-card"><span class="tag">${esc(t.category || 'General')}</span><h3>${esc(t.title)}</h3><p>${esc(t.description || 'Practice resource')}</p><a class="btn btn-primary" href="${esc(t.url)}" target="_blank" rel="noopener noreferrer">Open test ↗</a><p class="form-note" style="margin-top:8px;word-break:break-all">${esc(t.url)}</p></article>`).join('') : empty(testsCache.length ? 'No tests in this category' : 'Practice tests coming soon', testsCache.length ? 'Try another category above.' : 'No test links have been published yet. Please check again later.', '◈')}</div>`);
   }
 
   async function renderAnnouncements() {
@@ -478,10 +484,10 @@
     if (notesView.page > totalPages) notesView.page = totalPages;
     const pageItems = list.slice((notesView.page - 1) * PAGE_SIZE, notesView.page * PAGE_SIZE);
     const lockLabel = r => !session ? 'Sign in to access' : !isApproved() ? (profile && profile.status === 'suspended' ? 'Account suspended' : 'Approval required') : r.access_type === 'paid' ? 'Package required' : 'Access restricted';
-    const cards = pageItems.map(r => `<article class="card resource-card"><div class="resource-meta"><span class="tag">${esc(r.category || 'General')}</span>${r.subject ? `<span class="tag">${esc(r.subject)}</span>` : ''}<span class="tag ${r.access_type === 'free' ? 'free' : 'paid'}">${r.access_type === 'free' ? 'FREE' : 'PREMIUM'}</span>${r.is_preview ? '<span class="tag">PREVIEW</span>' : ''}</div><h3>${esc(r.title)}</h3><p>${esc(r.description || 'Study resource published by ISSB ASPIRANTS.')}</p>${r.has_access ? `<button class="btn btn-primary" data-download="${esc(r.id)}">Secure download ↗</button>` : `<button class="btn btn-outline" data-restricted="${esc(r.id)}">${lockLabel(r)}</button>`}</article>`).join('');
+    const cards = pageItems.map(r => `<article class="card resource-card"><div class="resource-meta"><span class="tag">${esc(r.category || 'General')}</span>${r.subject ? `<span class="tag">${esc(r.subject)}</span>` : ''}${r.file_type && r.file_type !== 'pdf' ? `<span class="tag">${esc(r.file_type.toUpperCase())}</span>` : ''}<span class="tag ${r.access_type === 'free' ? 'free' : 'paid'}">${r.access_type === 'free' ? 'FREE' : 'PREMIUM'}</span>${r.is_preview ? '<span class="tag">PREVIEW</span>' : ''}</div><h3>${esc(r.title)}</h3><p>${esc(r.description || 'Study resource published by ISSB ASPIRANTS.')}</p>${r.has_access ? `<button class="btn btn-primary" data-download="${esc(r.id)}">Secure download ↗</button>` : `<button class="btn btn-outline" data-restricted="${esc(r.id)}">${lockLabel(r)}</button>`}</article>`).join('');
     const pager = totalPages > 1 ? `<div class="form-actions" style="justify-content:center;margin-top:20px">${Array.from({ length: totalPages }, (_, i) => `<button class="btn ${notesView.page === i + 1 ? 'btn-primary' : 'btn-outline'}" data-page="${i + 1}">${i + 1}</button>`).join('')}</div>` : '';
     const notice = !session ? 'Sign in and get your account approved to access files.' : !isApproved() ? (profile && profile.status === 'suspended' ? 'Your account is suspended. Contact the academy to restore access.' : 'Your account must be approved before resource downloads are enabled.') : 'Select an eligible resource to request a secure download.';
-    return wrap(`${pageHead(freeOnly ? 'Free library' : 'Study resources', 'Notes Library', freeOnly ? 'Free notes are open to every approved student account. No email verification is needed — the owner approves your account.' : 'Browse the published catalogue. Restricted PDFs are served only to approved students with the required access.')}
+    return wrap(`${pageHead(freeOnly ? 'Free library' : 'Study resources', 'Notes Library', freeOnly ? 'Free notes are open to every approved student account. No email verification is needed — the owner approves your account.' : 'Browse the published catalogue. Restricted files are served only to approved students with the required access.')}
     <div class="notice info" style="margin-bottom:18px">${notice}</div>
     ${!resources.length ? empty('No published resources yet', 'The catalogue will populate when the owner publishes materials.', '▤') : `
       <div class="filter-bar"><input type="search" id="notes-q" placeholder="Search title, category, subject…" value="${esc(notesView.q)}">
@@ -675,11 +681,11 @@
   function adminResources() {
     const list = A.resources || [], pkgs = A.pkgs || [];
     const pkgOptions = (sel) => pkgs.map(p => `<option value="${esc(p.id)}" ${sel === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-    return `<section class="admin-panel"><h2>Notes & PDF management</h2><p class="muted">Upload a PDF, set its metadata and access rules, then publish. Files go to the private <code>private-notes</code> bucket and are served only through short-lived signed URLs to eligible students.</p>
+    return `<section class="admin-panel"><h2>Notes & study material management</h2><p class="muted">Upload notes in any common format — PDF, Word, PowerPoint, Excel, text or pictures — set metadata and access rules, then publish. Files go to the private <code>private-notes</code> bucket and are served only through short-lived signed URLs to eligible students. Non-PDF formats need the one-time <code>supabase-anytype-notes.sql</code> run in Supabase.</p>
     <form id="resource-form" class="card"><h3 id="resource-form-title">Add a resource</h3><input type="hidden" name="editing" value="">
-      <div class="field"><label>PDF file</label><input type="file" name="file" accept="application/pdf"><span class="form-note">Required for a new resource. Max 50&nbsp;MB, PDF only. Leave empty when editing to keep the current file.</span></div>
+      <div class="field"><label>Notes file</label><input type="file" name="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.png,.jpg,.jpeg,.webp"><span class="form-note">Required for a new resource. Max 50&nbsp;MB. PDF, Word, PowerPoint, Excel, text or picture. Leave empty when editing to keep the current file.</span></div>
       <div id="upload-progress" class="progress hidden"><span></span></div>
-      <div class="form-grid" style="margin-top:12px"><div class="field"><label>Title</label><input name="title" required maxlength="160"></div><div class="field"><label>Category</label><input name="category" placeholder="e.g. Verbal" maxlength="80"></div><div class="field"><label>Subject</label><input name="subject" placeholder="e.g. Synonyms" maxlength="80"></div><div class="field"><label>Access</label><select name="access_type"><option value="free">Free (approved students)</option><option value="paid">Paid (package required)</option></select></div><div class="field"><label>Package (for paid)</label><select name="package_id"><option value="">— none —</option>${pkgOptions()}</select></div><div class="field full"><label>Description</label><textarea name="description" maxlength="600"></textarea></div></div>
+      <div class="form-grid" style="margin-top:12px"><div class="field"><label>Title</label><input name="title" required maxlength="160"></div><div class="field"><label>Category</label><input name="category" list="resource-cat-list" placeholder="e.g. Verbal" maxlength="80"><datalist id="resource-cat-list"><option>Verbal</option><option>Non-Verbal</option><option>Academic</option><option>Intelligence</option><option>English</option><option>Mathematics</option><option>Current Affairs</option><option>Interview</option><option>Physical</option></datalist><span class="form-note">Pick a suggestion or type any category.</span></div><div class="field"><label>Subject</label><input name="subject" placeholder="e.g. Synonyms" maxlength="80"></div><div class="field"><label>Access</label><select name="access_type"><option value="free">Free (approved students)</option><option value="paid">Paid (package required)</option></select></div><div class="field"><label>Package (for paid)</label><select name="package_id"><option value="">— none —</option>${pkgOptions()}</select></div><div class="field full"><label>Description</label><textarea name="description" maxlength="600"></textarea></div></div>
       <label class="checkline"><input type="checkbox" name="is_preview"> Allow as a free preview</label>
       <label class="checkline"><input type="checkbox" name="published" checked> Published (visible in library)</label>
       <div class="form-actions"><button class="btn btn-primary" type="submit" id="resource-save">Save resource</button><button class="btn btn-outline" type="button" id="resource-reset">Clear</button></div></form>
@@ -692,7 +698,7 @@
     return `<section class="admin-panel"><h2>Practice-test links</h2><p class="muted">Manage external test links. Only HTTPS URLs are accepted. Hiding a link here does not secure the external platform — configure its own permissions separately.</p>
     <div class="table-wrap"><table class="data-table"><thead><tr><th>Title</th><th>Category</th><th>URL</th><th>Published</th><th>Actions</th></tr></thead><tbody>${list.map(t => `<tr><td>${esc(t.title)}</td><td>${esc(t.category)}</td><td class="muted">${esc(t.url)}</td><td><span class="status ${t.published ? 'approved' : ''}">${t.published ? 'yes' : 'no'}</span></td><td><div class="row-actions"><button class="btn btn-outline" data-edit-test="${esc(t.id)}">Edit</button><button class="btn btn-danger" data-delete-test="${esc(t.id)}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="5">No tests yet.</td></tr>'}</tbody></table></div>
     <form id="test-form" class="card" style="margin-top:20px"><h3 id="test-form-title">Add a test link</h3><input type="hidden" name="editing" value="">
-      <div class="form-grid"><div class="field"><label>Title</label><input name="title" required maxlength="160"></div><div class="field"><label>Category</label><select name="category"><option>Verbal</option><option>Non-Verbal</option><option>Academic</option></select></div><div class="field full"><label>HTTPS URL</label><input name="url" type="url" required placeholder="https://…"></div><div class="field full"><label>Description</label><textarea name="description" maxlength="600"></textarea></div></div>
+      <div class="form-grid"><div class="field"><label>Title</label><input name="title" required maxlength="160"></div><div class="field"><label>Category</label><input name="category" list="test-cat-list" placeholder="e.g. Full Test" maxlength="60"><datalist id="test-cat-list"><option>Verbal</option><option>Non-Verbal</option><option>Academic</option><option>Full Test</option><option>Intelligence</option><option>English</option><option>Mathematics</option><option>Current Affairs</option><option>Interview</option></datalist><span class="form-note">Pick a suggestion or type any category.</span></div><div class="field full"><label>HTTPS URL</label><input name="url" type="url" required placeholder="https://…"></div><div class="field full"><label>Description</label><textarea name="description" maxlength="600"></textarea></div></div>
       <label class="checkline"><input type="checkbox" name="published" checked> Published</label>
       <div class="form-actions"><button class="btn btn-primary" type="submit">Save test link</button><button class="btn btn-outline" type="button" id="test-reset">Clear</button></div></form></section>`;
   }
@@ -942,6 +948,19 @@
     window.open(link.signedUrl, '_blank', 'noopener,noreferrer');
   }
 
+  // Extension → MIME for every notes format the admin may upload. The storage
+  // bucket accepts these only after supabase-anytype-notes.sql has been run.
+  const NOTE_TYPES = {
+    pdf: 'application/pdf', doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    txt: 'text/plain', md: 'text/markdown', png: 'image/png', jpg: 'image/jpeg',
+    jpeg: 'image/jpeg', webp: 'image/webp'
+  };
+
   async function uploadResource(existing) {
     const form = $('#resource-form');
     const f = new FormData(form);
@@ -954,21 +973,25 @@
     const file = fileInput.files && fileInput.files[0];
     const saveBtn = $('#resource-save'); const bar = $('#upload-progress');
     let storage_path = existing ? existing.storage_path : null;
+    let fileType = existing ? (existing.file_type || 'pdf') : 'pdf';
     saveBtn.disabled = true;
     try {
       if (file) {
-        if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) throw new Error('Only PDF files are allowed.');
+        const ext = (file.name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
+        const mime = NOTE_TYPES[ext];
+        if (!mime) throw new Error('Unsupported file type. Use PDF, Word, PowerPoint, Excel, text or a picture.');
         if (file.size > 52428800) throw new Error('File is larger than the 50 MB limit.');
         const cat = slug(f.get('category') || 'general');
-        storage_path = `${cat}/${slug(title)}-${Date.now()}.pdf`;
+        storage_path = `${cat}/${slug(title)}-${Date.now()}.${ext}`;
+        fileType = ext;
         bar.classList.remove('hidden'); bar.classList.add('busy');
-        const { error: upErr } = await db.storage.from('private-notes').upload(storage_path, file, { contentType: 'application/pdf', upsert: false });
+        const { error: upErr } = await db.storage.from('private-notes').upload(storage_path, file, { contentType: mime, upsert: false });
         bar.classList.remove('busy'); bar.classList.add('hidden');
-        if (upErr) throw new Error(upErr.message || 'Upload failed.');
-      } else if (!existing) { throw new Error('Choose a PDF file to upload.'); }
+        if (upErr) throw new Error(/mime|content.?type/i.test(upErr.message) ? 'The server bucket still allows PDF only. Run supabase-anytype-notes.sql once in the Supabase SQL Editor, then retry.' : (upErr.message || 'Upload failed.'));
+      } else if (!existing) { throw new Error('Choose a file to upload.'); }
       const row = {
         title, description: String(f.get('description') || '').trim(), category: String(f.get('category') || '').trim() || 'General',
-        subject: String(f.get('subject') || '').trim(), file_type: 'pdf', access_type: access, package_id,
+        subject: String(f.get('subject') || '').trim(), file_type: fileType, access_type: access, package_id,
         is_preview: f.get('is_preview') === 'on', published: f.get('published') === 'on',
       };
       if (file) row.storage_path = storage_path; // new or replacement file
@@ -1206,7 +1229,7 @@
     const testForm = $('#test-form');
     $$('[data-edit-test]').forEach(b => b.addEventListener('click', () => {
       const t = (A.tests || []).find(x => x.id === b.dataset.editTest); if (!t) return;
-      testForm.querySelector('[name="editing"]').value = t.id; testForm.querySelector('[name="title"]').value = t.title || ''; testForm.querySelector('[name="category"]').value = t.category || 'Verbal';
+      testForm.querySelector('[name="editing"]').value = t.id; testForm.querySelector('[name="title"]').value = t.title || ''; testForm.querySelector('[name="category"]').value = t.category || '';
       testForm.querySelector('[name="url"]').value = t.url || ''; testForm.querySelector('[name="description"]').value = t.description || ''; testForm.querySelector('[name="published"]').checked = !!t.published;
       $('#test-form-title').textContent = 'Edit test link'; testForm.scrollIntoView({ behavior: 'smooth' });
     }));
@@ -1214,7 +1237,7 @@
     testForm?.addEventListener('submit', async e => {
       e.preventDefault(); const f = new FormData(testForm); const url = String(f.get('url')).trim(); const editing = String(f.get('editing') || '');
       if (!/^https:\/\/.+/i.test(url)) { toast('Use a valid HTTPS URL.'); return; }
-      const row = { title: String(f.get('title')).trim(), category: String(f.get('category')), url, description: String(f.get('description') || '').trim(), published: f.get('published') === 'on' };
+      const row = { title: String(f.get('title')).trim(), category: String(f.get('category') || '').trim() || 'General', url, description: String(f.get('description') || '').trim(), published: f.get('published') === 'on' };
       let error; if (editing) { ({ error } = await db.from('practice_tests').update(row).eq('id', editing)); } else { row.created_by = session.user.id; ({ error } = await db.from('practice_tests').insert(row)); }
       if (error) { toast(error.message); return; } toast('Test link saved.'); await reloadAdmin();
     });
@@ -1320,6 +1343,7 @@
   // ---------- Guidance / reviews / response panel wiring (student + public) ----------
   function wireContent() {
     $$('[data-guide-cat]').forEach(b => b.addEventListener('click', () => { guidesView.cat = b.dataset.guideCat; render('guidance'); }));
+    $$('[data-test-cat]').forEach(b => b.addEventListener('click', () => { testsView.cat = b.dataset.testCat; render('tests'); }));
     $$('[data-guide-open]').forEach(b => b.addEventListener('click', () => openLightbox(b.dataset.guideOpen)));
     $$('[data-thread]').forEach(b => b.addEventListener('click', () => { openThreadId = b.dataset.thread; render('dashboard'); }));
     $('#thread-reply')?.addEventListener('submit', e => { e.preventDefault(); sendThreadMessage(new FormData(e.currentTarget)); });
