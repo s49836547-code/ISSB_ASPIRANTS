@@ -79,6 +79,17 @@
 .review-card h3{margin:0}
 .review-card p{margin:0;font-size:14px;color:#3c4f66}
 .review-card .reply{margin-top:auto;padding:11px 13px;border-left:3px solid var(--cyan);background:#f2fbfd;border-radius:0 11px 11px 0;font-size:12.5px;color:#155e75}
+.exp-card{display:flex;flex-direction:column;gap:9px}
+.exp-card h3{margin:0}
+.exp-card p{margin:0;font-size:14px;color:#3c4f66;white-space:pre-wrap}
+.exp-card .reply{margin-top:auto;padding:11px 13px;border-left:3px solid var(--cyan);background:#f2fbfd;border-radius:0 11px 11px 0;font-size:12.5px;color:#155e75}
+.exp-helped{font-size:12.5px;color:#7c93a8}
+.exp-chip{align-self:flex-start;padding:5px 12px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase}
+.exp-chip.clear{background:rgba(46,204,138,.14);color:#178f63}
+.exp-chip.rec{background:rgba(0,163,196,.14);color:#0079a8}
+.exp-chip.reap{background:rgba(240,180,60,.18);color:#9a6b12}
+.exp-chip.prep{background:rgba(124,147,168,.16);color:#5b7186}
+.hp-field{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 .thread-layout{display:grid;grid-template-columns:250px minmax(0,1fr);gap:16px;align-items:start}
 .thread-list{display:flex;flex-direction:column;gap:7px;max-height:460px;overflow:auto;padding:11px;border:1px solid var(--line);border-radius:16px;background:#f8fafc}

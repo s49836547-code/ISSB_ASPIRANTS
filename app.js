@@ -22,7 +22,7 @@
   let session = null, profile = null, currentPage = 'home';
   let openThreadId = null;
   let notesCache = [], packagesCache = [], testsCache = [], announcementsCache = [], prCache = [], settings = {};
-  let guidesCache = [], reviewsCache = [];
+  let guidesCache = [], reviewsCache = [], experiencesCache = [];
   let adminTab = 'overview';
   const notesView = { q: '', category: '', subject: '', access: '', page: 1 };
   const PAGE_SIZE = 9;
@@ -105,6 +105,7 @@
   async function loadAnnouncements() { if (!db) return; const { data, error } = await db.from('announcements').select('*').eq('published', true).order('created_at', { ascending: false }); if (!error) announcementsCache = data || []; }
   async function loadGuides() { if (!db) return; const { data, error } = await db.from('guides').select('*').eq('published', true).order('sort_order').order('created_at', { ascending: false }); if (!error) guidesCache = data || []; }
   async function loadReviews() { if (!db) return; const { data, error } = await db.from('reviews').select('id,name,rating,body,context,status,admin_reply,created_at').eq('status', 'published').order('created_at', { ascending: false }); if (!error) reviewsCache = data || []; }
+  async function loadExperiences() { if (!db) return; const { data, error } = await db.from('experiences').select('id,name,result,body,helped_with,admin_reply,created_at').eq('status', 'published').order('created_at', { ascending: false }); if (!error) experiencesCache = data || []; }
 
   // ---------- Media helpers ----------
   // Interview attire has two fixed galleries; everything else is general guidance.
@@ -252,9 +253,13 @@
   }
 
   // ---------- Public pages ----------
-  function renderHome() {
+  async function renderHome() {
     const c = contactInfo();
+    await loadExperiences();
+    const exps = (experiencesCache || []).slice(0, 3);
+    const expStrip = exps.length ? `<section class="section band"><div class="container"><div class="section-head"><span class="kicker">Before you join</span><h2>Students who prepared here, in their own words.</h2><p>Real outcomes from students who used ISSB ASPIRANTS material — each story is published after academy review.</p></div><div class="grid grid-3">${exps.map(x => `<article class="card exp-card"><span class="${expChip(x.result)}">${esc(x.result)}</span><h3>${esc(x.name)}</h3><p>${esc(x.body.slice(0, 220))}${x.body.length > 220 ? '…' : ''}</p></article>`).join('')}</div><div class="form-actions">${buttonLink('experiences', 'Read all experiences')}</div></div></section>` : '';
     return `<section class="hero"><div class="hero-inner"><span class="eyebrow">✦ Structured preparation · Independent resources</span><h1>Prepare with purpose.<br><span>Perform with confidence.</span></h1><p>Explore ISSB preparation notes, intelligence practice resources, academic material and curated mock tests — organised to help you prepare with consistency.</p><div class="actions">${buttonLink('auth', 'Create Student Account')}${buttonLink('packages', 'Explore Packages', 'btn btn-secondary')}</div><div class="stat-row"><div class="stat"><strong>01</strong><span>Register and verify your email</span></div><div class="stat"><strong>02</strong><span>Wait for account approval</span></div><div class="stat"><strong>03</strong><span>Access eligible resources</span></div></div></div></section>
+    ${expStrip}
     <section class="section"><div class="container"><div class="section-head center"><span class="kicker">Your preparation hub</span><h2>Everything organised in one place.</h2><p>Browse resources, choose a preparation package, and track your access from your student account.</p></div><div class="grid grid-3"><article class="card"><div class="icon-box">▤</div><h3>Study notes</h3><p>Find resources by category and access level. Protected files require an approved account and the correct entitlement.</p></article><article class="card"><div class="icon-box">◈</div><h3>Practice tests</h3><p>Use curated practice links for verbal, non-verbal and academic preparation when published by the academy.</p></article><article class="card"><div class="icon-box">✓</div><h3>Clear access process</h3><p>Email verification, owner approval and manual payment verification help keep account access controlled.</p></article></div></div></section>
     <section class="section band"><div class="container grid grid-3" style="align-items:center"><div class="section-head"><span class="kicker">Start here</span><h2>Choose a path that fits your preparation.</h2><p>Public visitors can view the package catalogue. Materials are made available only after the required account and payment checks.</p></div><div class="card"><h3>Free resources</h3><p>Register, verify your email and wait for approval to access materials marked free.</p><div class="form-actions">${buttonLink('free-notes', 'View free notes', 'btn btn-outline')}</div></div><div class="card"><h3>Premium packages</h3><p>Select a package, submit your EasyPaisa payment reference and wait for manual verification.</p><div class="form-actions">${buttonLink('packages', 'View packages', 'btn btn-primary')}</div></div></div></section>
     <section class="section"><div class="container"><div class="notice info"><strong>Independent platform:</strong> ISSB ASPIRANTS is a preparation resource platform and is not an official ISSB or armed forces website. No selection outcome is guaranteed. <a class="channel-link" href="${esc(c.channel_url)}" target="_blank" rel="noopener noreferrer">Join the WhatsApp channel ↗</a></div></div></section>`;
@@ -430,6 +435,27 @@
     <div class="notice info" style="margin-top:22px"><strong>Share your experience:</strong> ${session ? 'open your dashboard and use the “Share your experience” panel. Reviews appear here once the academy publishes them.' : 'sign in with your student account, then use the “Share your experience” panel on your dashboard.'} ${session ? buttonLink('dashboard', 'Go to dashboard') : buttonLink('auth', 'Student login')}</div>`);
   }
 
+  // ---------- Student experiences ----------
+  const EXP_RESULTS = ['Initial test cleared', 'ISSB recommended', 'Reappear — preparing again', 'Still preparing'];
+  const expChip = r => `exp-chip ${r === 'ISSB recommended' ? 'rec' : r === 'Initial test cleared' ? 'clear' : r === 'Reappear — preparing again' ? 'reap' : 'prep'}`;
+
+  async function renderExperiences() {
+    await loadExperiences();
+    const list = experiencesCache || [];
+    const cards = list.map(x => `<article class="card exp-card"><span class="${expChip(x.result)}">${esc(x.result)}</span><h3>${esc(x.name)}</h3><span class="kicker">${fmtDate(x.created_at)}</span><p>${esc(x.body)}</p>${x.helped_with ? `<p class="exp-helped">Prepared with: ${esc(x.helped_with)}</p>` : ''}${x.admin_reply ? `<div class="reply"><strong>Academy response:</strong> ${esc(x.admin_reply)}</div>` : ''}</article>`).join('');
+    return wrap(`${pageHead('Student experiences', 'Real stories from students who prepared here', 'Students who sat the initial test or ISSB after preparing with ISSB ASPIRANTS share what actually happened — in their own words. Every story is checked by the academy before it appears on this page.')}
+    <div class="stat-grid"><div class="stat-card green"><strong>${list.length}</strong><span>Experiences published</span></div><div class="stat-card"><strong>${list.filter(x => x.result === 'ISSB recommended').length}</strong><span>ISSB recommended</span></div><div class="stat-card amber"><strong>${list.filter(x => x.result === 'Initial test cleared').length}</strong><span>Initial test cleared</span></div></div>
+    <div class="grid grid-3" style="margin-top:20px">${cards || empty('No experiences published yet', 'Students and visitors can share their story below — it appears here once the academy publishes it.', '🎖')}</div>
+    <form id="experience-form" class="form-card" style="margin-top:26px"><h2>Share your experience</h2><p class="muted">Sat the initial test or ISSB after preparing with our material? Tell the next batch of students what actually happened. Your story stays hidden until the academy publishes it.</p>
+    <div class="form-grid"><div class="field"><label for="exp-name">Your name</label><input id="exp-name" name="name" required maxlength="80" autocomplete="name"></div>
+    <div class="field"><label for="exp-result">Your result</label><select id="exp-result" name="result">${EXP_RESULTS.map(r => `<option>${esc(r)}</option>`).join('')}</select></div>
+    <div class="field full"><label for="exp-body">Your experience</label><textarea id="exp-body" name="body" required minlength="20" maxlength="4000" placeholder="How did you prepare, what did the test or ISSB feel like, and what helped you the most?"></textarea></div>
+    <div class="field full"><label for="exp-helped">What helped from ISSB ASPIRANTS? (optional)</label><input id="exp-helped" name="helped_with" maxlength="120" placeholder="e.g. Notes library, practice tests, interview video"></div>
+    <div class="hp-field" aria-hidden="true"><label>Leave this field empty</label><input name="website" tabindex="-1" autocomplete="off"></div></div>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">Submit for publication →</button></div>
+    <p class="form-note">No login needed. Submissions are reviewed by the academy — only published stories are visible to visitors.</p></form>`);
+  }
+
   function renderContact() {
     const c = contactInfo();
     return wrap(`${pageHead('Support', 'Contact the academy', 'Send a message or contact the academy directly on WhatsApp.')}
@@ -518,7 +544,7 @@
   const ADMIN_TABS = [
     ['overview', 'Overview', '▦'], ['students', 'Students', '👥'], ['packages', 'Packages', '▣'],
     ['payments', 'Payments', '₨'], ['resources', 'Notes & PDFs', '▤'], ['tests', 'Practice tests', '◈'],
-    ['guidance', 'Guidance', '✦'], ['reviews', 'Reviews', '★'], ['responses', 'Responses', '💬'],
+    ['guidance', 'Guidance', '✦'], ['reviews', 'Reviews', '★'], ['experiences', 'Experiences', '🎖'], ['responses', 'Responses', '💬'],
     ['announcements', 'Announcements', '◷'], ['contact', 'Contact inbox', '✉'], ['settings', 'Settings', '⚙']
   ];
 
@@ -565,6 +591,7 @@
     if (tab === 'announcements') { const q = await db.from('announcements').select('*').order('created_at', { ascending: false }).limit(200); A.announcements = q.data || []; }
     if (tab === 'guidance') { const q = await db.from('guides').select('*').order('sort_order').order('created_at', { ascending: false }).limit(300); A.guides = q.data || []; }
     if (tab === 'reviews') { const q = await db.from('reviews').select('*').order('created_at', { ascending: false }).limit(300); A.reviews = q.data || []; }
+    if (tab === 'experiences') { const q = await db.from('experiences').select('*').order('created_at', { ascending: false }).limit(300); A.experiences = q.data || []; }
     if (tab === 'responses') {
       const [t, p] = await Promise.all([
         db.from('threads').select('id,user_id,subject,status,last_message_at,created_at').order('last_message_at', { ascending: false }).limit(200),
@@ -723,6 +750,12 @@
     <div class="table-wrap"><table class="data-table"><thead><tr><th>Student</th><th>Rating</th><th>Context</th><th>Review</th><th>Status</th><th>Actions</th></tr></thead><tbody>${list.map(r => `<tr><td>${esc(r.name || '—')}</td><td>${stars(r.rating)}</td><td>${esc(r.context || '—')}</td><td class="muted" style="max-width:300px;white-space:pre-wrap">${esc(r.body)}${r.admin_reply ? `<br><strong>Reply:</strong> ${esc(r.admin_reply)}` : ''}</td><td><span class="status ${r.status === 'published' ? 'approved' : r.status === 'rejected' ? 'rejected' : 'pending'}">${esc(r.status)}</span></td><td><div class="row-actions">${r.status !== 'published' ? `<button class="btn btn-outline" data-review-status="${esc(r.id)}" data-status="published">Publish</button>` : ''}${r.status !== 'rejected' ? `<button class="btn btn-danger" data-review-status="${esc(r.id)}" data-status="rejected">Reject</button>` : ''}<button class="btn btn-secondary" data-review-reply="${esc(r.id)}">Reply</button><button class="btn btn-danger" data-review-delete="${esc(r.id)}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="6">No reviews submitted yet.</td></tr>'}</tbody></table></div></section>`;
   }
 
+  function adminExperiences() {
+    const list = A.experiences || [];
+    return `<section class="admin-panel"><h2>Student experiences</h2><p class="muted">Stories submitted from the public Experiences page — by students and by visitors (tagged <em>visitor</em>). Nothing goes public until you publish it. Reject or delete anything you cannot stand behind; an academy response shows under the published story.</p>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>Result</th><th>Story</th><th>Status</th><th>Actions</th></tr></thead><tbody>${list.map(x => `<tr><td>${esc(x.name)}${x.user_id ? '' : ' <span class="status pending">visitor</span>'}</td><td><span class="${expChip(x.result)}">${esc(x.result)}</span></td><td class="muted" style="max-width:320px;white-space:pre-wrap">${esc(x.body)}${x.helped_with ? `<br><strong>Helped by:</strong> ${esc(x.helped_with)}` : ''}${x.admin_reply ? `<br><strong>Reply:</strong> ${esc(x.admin_reply)}` : ''}</td><td><span class="status ${x.status === 'published' ? 'approved' : x.status === 'rejected' ? 'rejected' : 'pending'}">${esc(x.status)}</span></td><td><div class="row-actions">${x.status !== 'published' ? `<button class="btn btn-outline" data-exp-status="${esc(x.id)}" data-status="published">Publish</button>` : ''}${x.status !== 'rejected' ? `<button class="btn btn-danger" data-exp-status="${esc(x.id)}" data-status="rejected">Reject</button>` : ''}<button class="btn btn-secondary" data-exp-reply="${esc(x.id)}">Reply</button><button class="btn btn-danger" data-exp-delete="${esc(x.id)}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="5">No experiences submitted yet.</td></tr>'}</tbody></table></div></section>`;
+  }
+
   function adminResponses() {
     const threads = A.threads || [], names = A.threadNames || {}, msgs = A.threadMsgs || [];
     const open = threads.find(t => t.id === A.openThread) || null;
@@ -772,6 +805,7 @@
       case 'tests': return adminTests();
       case 'guidance': return adminGuidance();
       case 'reviews': return adminReviews();
+      case 'experiences': return adminExperiences();
       case 'responses': return adminResponses();
       case 'announcements': return adminAnnouncements();
       case 'contact': return adminContact();
@@ -788,7 +822,7 @@
   }
 
   // ---------- Router ----------
-  const renderers = { home: renderHome, about: renderAbout, packages: renderPackages, notes: () => renderNotes(false), 'free-notes': () => renderNotes(true), tests: renderTests, guidance: renderGuidance, reviews: renderReviews, announcements: renderAnnouncements, contact: renderContact, auth: renderAuth, dashboard: renderDashboard, admin: renderAdmin };
+  const renderers = { home: renderHome, about: renderAbout, packages: renderPackages, notes: () => renderNotes(false), 'free-notes': () => renderNotes(true), tests: renderTests, guidance: renderGuidance, reviews: renderReviews, experiences: renderExperiences, announcements: renderAnnouncements, contact: renderContact, auth: renderAuth, dashboard: renderDashboard, admin: renderAdmin };
 
   async function render(page) {
     currentPage = page;
@@ -1230,6 +1264,16 @@
     }));
     $$('[data-review-delete]').forEach(b => b.addEventListener('click', async () => { if (!confirm('Delete this review permanently?')) return; const { error } = await db.from('reviews').delete().eq('id', b.dataset.reviewDelete); if (error) { toast(error.message); return; } toast('Review deleted.'); await reloadAdmin(); }));
 
+    // Experiences moderation
+    $$('[data-exp-status]').forEach(b => b.addEventListener('click', async () => { const { error } = await db.from('experiences').update({ status: b.dataset.status }).eq('id', b.dataset.expStatus); if (error) { toast(error.message); return; } toast(b.dataset.status === 'published' ? 'Experience published on the site.' : 'Experience rejected.'); await reloadAdmin(); }));
+    $$('[data-exp-reply]').forEach(b => b.addEventListener('click', async () => {
+      const x = (A.experiences || []).find(v => v.id === b.dataset.expReply); if (!x) return;
+      const text = prompt('Academy response shown under this experience:', x.admin_reply || ''); if (text === null) return;
+      const { error } = await db.from('experiences').update({ admin_reply: text.trim().slice(0, 1000) }).eq('id', x.id);
+      if (error) { toast(error.message); return; } toast('Response saved.'); await reloadAdmin();
+    }));
+    $$('[data-exp-delete]').forEach(b => b.addEventListener('click', async () => { if (!confirm('Delete this experience permanently?')) return; const { error } = await db.from('experiences').delete().eq('id', b.dataset.expDelete); if (error) { toast(error.message); return; } toast('Experience deleted.'); await reloadAdmin(); }));
+
     // Response panel
     $$('[data-open-thread]').forEach(b => b.addEventListener('click', () => { A.openThread = b.dataset.openThread; reloadAdmin(); }));
     $('#admin-thread-reply')?.addEventListener('submit', e => { e.preventDefault(); sendThreadMessage(new FormData(e.currentTarget)); });
@@ -1311,6 +1355,31 @@
       if (error) { toast(error.message); return; }
       toast('Thank you! Your review appears on the public page once the academy publishes it.');
       await render('dashboard');
+    });
+
+    $('#experience-form')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = new FormData(e.currentTarget);
+      // Honeypot: bots fill the hidden field; humans never see it. Pretend success, save nothing.
+      if (String(f.get('website') || '').trim()) { toast('Thank you! Your experience will appear once the academy publishes it.'); e.currentTarget.reset(); return; }
+      if (!db) { toast('The experiences section is not connected on this server yet.'); return; }
+      const name = String(f.get('name') || '').trim();
+      const body = String(f.get('body') || '').trim();
+      if (name.length < 2) { toast('Please write your name.'); return; }
+      if (body.length < 20) { toast('Please write a few sentences about your experience (at least 20 characters).'); return; }
+      const result = String(f.get('result') || '');
+      const row = {
+        user_id: session ? session.user.id : null,
+        name: name.slice(0, 80),
+        result: EXP_RESULTS.includes(result) ? result : EXP_RESULTS[0],
+        body: body.slice(0, 4000),
+        helped_with: String(f.get('helped_with') || '').trim().slice(0, 120),
+        status: 'pending'
+      };
+      const { error } = await db.from('experiences').insert(row);
+      if (error) { toast(/exist|not find|not found|schema cache|PGRST205|permission/i.test(error.message) ? 'Experiences are not set up on this server yet — please try again later.' : error.message); return; }
+      toast('Thank you! Your experience will appear on this page once the academy publishes it.');
+      e.currentTarget.reset();
     });
   }
 
