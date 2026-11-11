@@ -232,18 +232,25 @@ create policy "public read free resource metadata" on public.resources
   for select to anon
   using (published = true and access_type = 'free');
 
--- ============================================================
--- 9a) PRIVATE STORAGE BUCKET for PDFs (FIX for "notes upload" failing).
---     The uploader writes to db.storage.from('private-notes'); if this bucket does not
---     exist the upload throws "Bucket not found" before the row is ever saved.
---     Idempotent: safe to re-run. Private (public = false), 50 MB cap, PDF only.
--- ============================================================
+-- Re-running setup preserves an existing bucket's MIME allowlist.
 insert into storage.buckets(id, name, public, file_size_limit, allowed_mime_types)
-values('private-notes', 'private-notes', false, 52428800, array['application/pdf'])
+values('private-notes', 'private-notes', false, 52428800, array[
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain',
+  'text/markdown',
+  'image/png',
+  'image/jpeg',
+  'image/webp'
+])
 on conflict (id) do update
   set public = false,
-      file_size_limit = 52428800,
-      allowed_mime_types = array['application/pdf'];
+      file_size_limit = 52428800;
 
 -- Admins may upload/replace/delete inside the bucket; the read policy below gates downloads.
 drop policy if exists "admins upload update delete PDFs" on storage.objects;

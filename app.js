@@ -1146,9 +1146,19 @@
   function wireContact() {
     $('#contact-form')?.addEventListener('submit', async e => {
       e.preventDefault(); if (!db) { toast('Configure Supabase before submitting messages.'); return; }
-      const f = new FormData(e.currentTarget);
-      const { error } = await db.from('contact_messages').insert({ name: String(f.get('name')).trim(), email: String(f.get('email')).trim(), subject: String(f.get('subject')).trim(), message: String(f.get('message')).trim() });
-      if (error) { toast(error.message); return; } e.currentTarget.reset(); toast('Message submitted.');
+      const form = e.currentTarget;
+      if (form.querySelector('[type="submit"]').disabled) return;
+      const f = new FormData(form);
+      const row = { name: String(f.get('name') || '').trim(), email: String(f.get('email') || '').trim(), subject: String(f.get('subject') || '').trim(), message: String(f.get('message') || '').trim() };
+      if (!row.name || !row.email || !row.subject || !row.message) { toast('Complete all message fields.'); return; }
+      const controls = form.querySelectorAll('input, textarea, button');
+      controls.forEach(control => { control.disabled = true; });
+      try {
+        const { error } = await db.from('contact_messages').insert(row);
+        if (error) throw error;
+        form.reset(); toast('Message submitted.');
+      } catch (err) { toast(err.message || 'Could not send your message. Please retry.'); }
+      finally { controls.forEach(control => { control.disabled = false; }); }
     });
   }
 
@@ -1259,8 +1269,13 @@
     }));
     $('#test-reset')?.addEventListener('click', () => { testForm.reset(); testForm.querySelector('[name="editing"]').value = ''; $('#test-form-title').textContent = 'Add a test link'; });
     testForm?.addEventListener('submit', async e => {
-      e.preventDefault(); const f = new FormData(testForm); const url = String(f.get('url')).trim(); const editing = String(f.get('editing') || '');
-      if (!/^https:\/\/.+/i.test(url)) { toast('Use a valid HTTPS URL.'); return; }
+      e.preventDefault(); const f = new FormData(testForm); const editing = String(f.get('editing') || '');
+      let url;
+      try {
+        const parsed = new URL(String(f.get('url') || '').trim());
+        if (parsed.protocol !== 'https:') throw new Error('HTTPS required');
+        url = parsed.href;
+      } catch { toast('Use a valid HTTPS URL.'); return; }
       const row = { title: String(f.get('title')).trim(), category: String(f.get('category') || '').trim() || 'General', url, description: String(f.get('description') || '').trim(), published: f.get('published') === 'on' };
       let error; if (editing) { ({ error } = await db.from('practice_tests').update(row).eq('id', editing)); } else { row.created_by = session.user.id; ({ error } = await db.from('practice_tests').insert(row)); }
       if (error) { toast(error.message); return; } toast('Test link saved.'); await reloadAdmin();
@@ -1407,9 +1422,11 @@
 
     $('#experience-form')?.addEventListener('submit', async e => {
       e.preventDefault();
-      const f = new FormData(e.currentTarget);
-      // Honeypot: bots fill the hidden field; humans never see it. Pretend success, save nothing.
-      if (String(f.get('website') || '').trim()) { toast('Thank you! Your experience will appear once the academy publishes it.'); e.currentTarget.reset(); return; }
+      const form = e.currentTarget;
+      if (form.querySelector('[type="submit"]').disabled) return;
+      const f = new FormData(form);
+      // Honeypot submissions receive confirmation without being stored.
+      if (String(f.get('website') || '').trim()) { toast('Thank you! Your experience will appear once the academy publishes it.'); form.reset(); return; }
       if (!db) { toast('The experiences section is not connected on this server yet.'); return; }
       const name = String(f.get('name') || '').trim();
       const body = String(f.get('body') || '').trim();
@@ -1424,10 +1441,20 @@
         helped_with: String(f.get('helped_with') || '').trim().slice(0, 120),
         status: 'pending'
       };
-      const { error } = await db.from('experiences').insert(row);
-      if (error) { toast(/exist|not find|not found|schema cache|PGRST205|permission/i.test(error.message) ? 'Experiences are not set up on this server yet — please try again later.' : error.message); return; }
-      toast('Thank you! Your experience will appear on this page once the academy publishes it.');
-      e.currentTarget.reset();
+      const controls = form.querySelectorAll('input, select, textarea, button');
+      controls.forEach(control => { control.disabled = true; });
+      try {
+        const { error } = await db.from('experiences').insert(row);
+        if (error) throw error;
+        form.reset();
+        toast('Thank you! Your experience will appear on this page once the academy publishes it.');
+      } catch (err) {
+        toast(/exist|not find|not found|schema cache|PGRST205|permission/i.test(err.message)
+          ? 'Experiences are not set up on this server yet — please try again later.'
+          : (err.message || 'Could not submit your experience. Please retry.'));
+      } finally {
+        controls.forEach(control => { control.disabled = false; });
+      }
     });
   }
 

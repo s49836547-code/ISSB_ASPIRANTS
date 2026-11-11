@@ -220,10 +220,23 @@ create policy "admin read and manage contact messages" on public.contact_message
 drop policy if exists "admin read audit logs" on public.audit_logs;
 create policy "admin read audit logs" on public.audit_logs for select to authenticated using (public.current_user_is_admin());
 
--- Private storage bucket for PDFs. Create a bucket with this exact ID, or run the insert below.
+-- Re-running setup preserves an existing bucket's MIME allowlist.
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
-values('private-notes','private-notes',false,52428800,array['application/pdf'])
-on conflict(id) do update set public=false, file_size_limit=52428800, allowed_mime_types=array['application/pdf'];
+values('private-notes','private-notes',false,52428800,array[
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain',
+  'text/markdown',
+  'image/png',
+  'image/jpeg',
+  'image/webp'
+])
+on conflict(id) do update set public=false, file_size_limit=52428800;
 drop policy if exists "approved users can read eligible PDFs" on storage.objects;
 create policy "approved users can read eligible PDFs" on storage.objects for select to authenticated using (
   bucket_id='private-notes' and exists(

@@ -31,7 +31,7 @@ create policy "experiences public read" on public.experiences
 drop policy if exists "experiences open insert" on public.experiences;
 create policy "experiences open insert" on public.experiences
   for insert to anon, authenticated
-  with check (status = 'pending' and (user_id is null or user_id = auth.uid()));
+  with check (status = 'pending' and admin_reply = '' and (user_id is null or user_id = auth.uid()));
 
 -- Only the admin (you) can publish/reject/reply.
 drop policy if exists "experiences admin update" on public.experiences;

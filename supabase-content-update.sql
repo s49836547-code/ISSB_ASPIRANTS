@@ -90,7 +90,7 @@ create policy "reviews public read" on public.reviews for select
 drop policy if exists "reviews student insert" on public.reviews;
 create policy "reviews student insert" on public.reviews for insert
   to authenticated
-  with check (user_id = auth.uid() and status = 'pending');
+  with check (user_id = auth.uid() and status = 'pending' and admin_reply = '');
 drop policy if exists "reviews student edit own" on public.reviews;
 create policy "reviews student edit own" on public.reviews for update
   to authenticated
@@ -105,6 +105,19 @@ create policy "reviews admin moderate" on public.reviews for all
   to authenticated
   using (public.current_user_is_admin())
   with check (public.current_user_is_admin());
+
+create or replace function public.protect_review_admin_reply()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  if new.admin_reply is distinct from old.admin_reply and not public.current_user_is_admin() then
+    raise exception 'Only academy admins can change review replies.' using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists protect_review_admin_reply on public.reviews;
+create trigger protect_review_admin_reply before update on public.reviews
+  for each row execute function public.protect_review_admin_reply();
 
 -- ------------------------------------------------------------
 -- 3) RESPONSE PANEL (threads + messages)
