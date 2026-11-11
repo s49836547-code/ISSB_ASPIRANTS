@@ -592,7 +592,7 @@
     }
     if (tab === 'packages') { const q = await db.from('packages').select('*').order('sort_order'); A.packages = q.data || []; }
     if (tab === 'payments') { const q = await db.from('payment_requests').select('id,user_id,package_id,package_name_snapshot,transaction_ref,amount_pkr,status,created_at,reviewed_at,receipt_path').order('created_at', { ascending: false }).limit(200); A.payments = q.data || []; }
-    if (tab === 'resources') { const [res, pkgs] = await Promise.all([db.from('resources').select('id,title,category,subject,file_type,access_type,is_preview,package_id,published,storage_path,created_at').order('created_at', { ascending: false }).limit(500), db.from('packages').select('id,name').order('sort_order')]); A.resources = res.data || []; A.pkgs = pkgs.data || []; await loadPackageResources(); }
+    if (tab === 'resources') { const [res, pkgs] = await Promise.all([db.from('resources').select('id,title,description,category,subject,file_type,access_type,is_preview,package_id,published,storage_path,created_at').order('created_at', { ascending: false }).limit(500), db.from('packages').select('id,name').order('sort_order')]); A.resources = res.data || []; A.pkgs = pkgs.data || []; await loadPackageResources(); }
     if (tab === 'tests') { const q = await db.from('practice_tests').select('*').order('created_at', { ascending: false }).limit(200); A.tests = q.data || []; }
     if (tab === 'announcements') { const q = await db.from('announcements').select('*').order('created_at', { ascending: false }).limit(200); A.announcements = q.data || []; }
     if (tab === 'guidance') { const q = await db.from('guides').select('*').order('sort_order').order('created_at', { ascending: false }).limit(300); A.guides = q.data || []; }
@@ -682,13 +682,13 @@
     const list = A.resources || [], pkgs = A.pkgs || [];
     const pkgOptions = (sel) => pkgs.map(p => `<option value="${esc(p.id)}" ${sel === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
     return `<section class="admin-panel"><h2>Notes & study material management</h2><p class="muted">Upload notes in any common format — PDF, Word, PowerPoint, Excel, text or pictures — set metadata and access rules, then publish. Files go to the private <code>private-notes</code> bucket and are served only through short-lived signed URLs to eligible students. Non-PDF formats need the one-time <code>supabase-anytype-notes.sql</code> run in Supabase.</p>
-    <form id="resource-form" class="card"><h3 id="resource-form-title">Add a resource</h3><input type="hidden" name="editing" value="">
+    <form id="resource-form" class="card"><h3 id="resource-form-title">Upload a new note</h3><p class="form-note">New uploads create separate notes, even with the same title or filename. Existing notes change only when you choose Edit. Use New note to leave editing.</p><input type="hidden" name="editing" value="">
       <div class="field"><label>Notes file</label><input type="file" name="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.png,.jpg,.jpeg,.webp"><span class="form-note">Required for a new resource. Max 50&nbsp;MB. PDF, Word, PowerPoint, Excel, text or picture. Leave empty when editing to keep the current file.</span></div>
       <div id="upload-progress" class="progress hidden"><span></span></div>
       <div class="form-grid" style="margin-top:12px"><div class="field"><label>Title</label><input name="title" required maxlength="160"></div><div class="field"><label>Category</label><input name="category" list="resource-cat-list" placeholder="e.g. Verbal" maxlength="80"><datalist id="resource-cat-list"><option>Verbal</option><option>Non-Verbal</option><option>Academic</option><option>Intelligence</option><option>English</option><option>Mathematics</option><option>Current Affairs</option><option>Interview</option><option>Physical</option></datalist><span class="form-note">Pick a suggestion or type any category.</span></div><div class="field"><label>Subject</label><input name="subject" placeholder="e.g. Synonyms" maxlength="80"></div><div class="field"><label>Access</label><select name="access_type"><option value="free">Free (approved students)</option><option value="paid">Paid (package required)</option></select></div><div class="field"><label>Package (for paid)</label><select name="package_id"><option value="">— none —</option>${pkgOptions()}</select></div><div class="field full"><label>Description</label><textarea name="description" maxlength="600"></textarea></div></div>
       <label class="checkline"><input type="checkbox" name="is_preview"> Allow as a free preview</label>
       <label class="checkline"><input type="checkbox" name="published" checked> Published (visible in library)</label>
-      <div class="form-actions"><button class="btn btn-primary" type="submit" id="resource-save">Save resource</button><button class="btn btn-outline" type="button" id="resource-reset">Clear</button></div></form>
+      <div class="form-actions"><button class="btn btn-primary" type="submit" id="resource-save">Upload new note</button><button class="btn btn-outline" type="button" id="resource-reset">New note</button></div></form>
     <div class="filter-bar" style="margin-top:20px"><input type="search" id="resource-search" placeholder="Search resources…"></div>
     <div class="table-wrap"><table class="data-table"><thead><tr><th>Title</th><th>Category</th><th>Subject</th><th>Access</th><th>Published</th><th>Actions</th></tr></thead><tbody id="resource-rows">${list.map(r => `<tr data-searchrow="${esc(r.title + ' ' + (r.category || '') + ' ' + (r.subject || ''))}"><td>${esc(r.title)}</td><td>${esc(r.category || '—')}</td><td>${esc(r.subject || '—')}</td><td><span class="tag ${r.access_type === 'free' ? 'free' : 'paid'}">${r.access_type}</span></td><td><span class="status ${r.published ? 'approved' : ''}">${r.published ? 'yes' : 'no'}</span></td><td><div class="row-actions"><button class="btn btn-outline" data-edit-resource="${esc(r.id)}">Edit</button><button class="btn btn-secondary" data-toggle-resource="${esc(r.id)}" data-published="${r.published ? 'false' : 'true'}">${r.published ? 'Unpublish' : 'Publish'}</button><button class="btn btn-danger" data-delete-resource="${esc(r.id)}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="6">No resources yet. Upload your first PDF above.</td></tr>'}</tbody></table></div></section>`;
   }
@@ -961,9 +961,13 @@
     jpeg: 'image/jpeg', webp: 'image/webp'
   };
 
-  async function uploadResource(existing) {
-    const form = $('#resource-form');
+  async function uploadResource(form) {
+    const saveBtn = form.querySelector('#resource-save');
+    if (saveBtn.disabled) return;
     const f = new FormData(form);
+    const editing = String(f.get('editing') || '');
+    const existing = editing ? (A.resources || []).find(r => r.id === editing) : null;
+    if (editing && !existing) { toast('Reopen the note with Edit before saving.'); return; }
     const title = String(f.get('title') || '').trim();
     const access = String(f.get('access_type'));
     const package_id = String(f.get('package_id') || '').trim() || null;
@@ -971,10 +975,12 @@
     if (access === 'paid' && !package_id) { toast('Paid resources must be linked to a package.'); return; }
     const fileInput = form.querySelector('input[name="file"]');
     const file = fileInput.files && fileInput.files[0];
-    const saveBtn = $('#resource-save'); const bar = $('#upload-progress');
+    const bar = form.querySelector('#upload-progress');
+    const controls = form.querySelectorAll('input, select, textarea, button');
     let storage_path = existing ? existing.storage_path : null;
     let fileType = existing ? (existing.file_type || 'pdf') : 'pdf';
-    saveBtn.disabled = true;
+    let resourceSaved = false;
+    controls.forEach(control => { control.disabled = true; });
     try {
       if (file) {
         const ext = (file.name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
@@ -982,7 +988,7 @@
         if (!mime) throw new Error('Unsupported file type. Use PDF, Word, PowerPoint, Excel, text or a picture.');
         if (file.size > 52428800) throw new Error('File is larger than the 50 MB limit.');
         const cat = slug(f.get('category') || 'general');
-        storage_path = `${cat}/${slug(title)}-${Date.now()}.${ext}`;
+        storage_path = `${cat}/${slug(title)}-${crypto.randomUUID()}.${ext}`;
         fileType = ext;
         bar.classList.remove('hidden'); bar.classList.add('busy');
         const { error: upErr } = await db.storage.from('private-notes').upload(storage_path, file, { contentType: mime, upsert: false });
@@ -994,22 +1000,39 @@
         subject: String(f.get('subject') || '').trim(), file_type: fileType, access_type: access, package_id,
         is_preview: f.get('is_preview') === 'on', published: f.get('published') === 'on',
       };
-      if (file) row.storage_path = storage_path; // new or replacement file
+      if (file) row.storage_path = storage_path;
       let id = existing ? existing.id : null, error;
+      if (existing?.package_id && existing.package_id !== package_id) {
+        // The old primary still grants access through resources until its update succeeds.
+        const { error: linkError } = await db.from('package_resources').delete().eq('resource_id', id).eq('package_id', existing.package_id);
+        if (linkError) throw new Error('Could not change the package. The note was not updated. ' + linkError.message);
+      }
       if (existing) { ({ error } = await db.from('resources').update(row).eq('id', existing.id)); }
       else { row.created_by = session.user.id; const res = await db.from('resources').insert(row).select('id').single(); id = res.data?.id; error = res.error; }
       if (error) throw new Error(error.message || 'Could not save resource.');
-      // Sync many-to-many package link (primary package). Keeps package_resources consistent.
-      if (id) {
-        await db.from('package_resources').delete().eq('resource_id', id);
-        if (package_id) await db.from('package_resources').insert({ package_id, resource_id: id, is_preview: row.is_preview });
+      resourceSaved = true;
+      // Keep retries on the saved note if package synchronization fails.
+      if (existing) { Object.assign(existing, row); }
+      else { A.resources.push({ ...row, id }); }
+      form.querySelector('[name="editing"]').value = id;
+      form.querySelector('#resource-form-title').textContent = 'Edit note: ' + title;
+      saveBtn.textContent = 'Save changes';
+      fileInput.value = '';
+      if (package_id) {
+        const { error: linkError } = await db.from('package_resources').upsert({ package_id, resource_id: id, is_preview: row.is_preview }, { onConflict: 'package_id,resource_id' });
+        if (linkError) throw new Error(linkError.message);
       }
       toast(existing ? 'Resource updated.' : 'Resource uploaded and saved.');
-      A._editingResource = null;
-      form.reset(); form.querySelector('input[name="editing"]').value = ''; $('#resource-form-title').textContent = 'Add a resource';
-      await reloadAdmin();
-    } catch (err) { bar.classList.remove('busy'); bar.classList.add('hidden'); toast(err.message || 'Upload failed.'); }
-    finally { saveBtn.disabled = false; }
+      if (form.isConnected) {
+        form.reset(); form.querySelector('[name="editing"]').value = '';
+        form.querySelector('#resource-form-title').textContent = 'Upload a new note';
+        saveBtn.textContent = 'Upload new note';
+        await reloadAdmin();
+      }
+    } catch (err) {
+      bar.classList.remove('busy'); bar.classList.add('hidden');
+      toast(resourceSaved ? 'Note saved, but package links could not be updated. Retry Save changes. ' + err.message : (err.message || 'Upload failed.'));
+    } finally { controls.forEach(control => { control.disabled = false; }); }
   }
 
   // ---------- Guidance media upload + save ----------
@@ -1204,15 +1227,16 @@
 
     // Resources
     filterRows('#resource-search', '#resource-rows');
-    $('#resource-form')?.addEventListener('submit', e => { e.preventDefault(); uploadResource(A._editingResource || null); });
-    $('#resource-reset')?.addEventListener('click', () => { $('#resource-form').reset(); $('#resource-form').querySelector('[name="editing"]').value = ''; A._editingResource = null; $('#resource-form-title').textContent = 'Add a resource'; });
+    $('#resource-form')?.addEventListener('submit', e => { e.preventDefault(); uploadResource(e.currentTarget); });
+    $('#resource-reset')?.addEventListener('click', () => { $('#resource-form').reset(); $('#resource-form').querySelector('[name="editing"]').value = ''; $('#resource-form-title').textContent = 'Upload a new note'; $('#resource-save').textContent = 'Upload new note'; });
     $$('[data-edit-resource]').forEach(b => b.addEventListener('click', () => {
-      const r = (A.resources || []).find(x => x.id === b.dataset.editResource); if (!r) return; A._editingResource = r;
-      const form = $('#resource-form'); form.querySelector('[name="editing"]').value = r.id; form.querySelector('[name="title"]').value = r.title || '';
+      const form = $('#resource-form'); if (form.querySelector('#resource-save').disabled) return;
+      const r = (A.resources || []).find(x => x.id === b.dataset.editResource); if (!r) return;
+      form.reset(); form.querySelector('[name="editing"]').value = r.id; form.querySelector('[name="title"]').value = r.title || '';
       form.querySelector('[name="category"]').value = r.category || ''; form.querySelector('[name="subject"]').value = r.subject || '';
       form.querySelector('[name="description"]').value = r.description || ''; form.querySelector('[name="access_type"]').value = r.access_type || 'free';
       form.querySelector('[name="package_id"]').value = r.package_id || ''; form.querySelector('[name="is_preview"]').checked = !!r.is_preview; form.querySelector('[name="published"]').checked = !!r.published;
-      $('#resource-form-title').textContent = 'Edit resource: ' + r.title; form.scrollIntoView({ behavior: 'smooth' });
+      $('#resource-form-title').textContent = 'Edit note: ' + r.title; $('#resource-save').textContent = 'Save changes'; form.scrollIntoView({ behavior: 'smooth' });
     }));
     $$('[data-toggle-resource]').forEach(b => b.addEventListener('click', async () => {
       const pub = b.dataset.published === 'true'; const { error } = await db.from('resources').update({ published: pub }).eq('id', b.dataset.toggleResource);
